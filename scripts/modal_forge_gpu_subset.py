@@ -315,8 +315,9 @@ def benchmark_gpu(
 
     print(f"GPU {gpu_id}: Generating {num_hints} hints (PRF on GPU, no CPU subset gen)")
 
-    # PRF key as tensor
-    prf_key_t = torch.tensor(prf_key, dtype=torch.int32, device=device)
+    # PRF key as tensor with stable 32-bit bit patterns.
+    prf_key_np = np.array(prf_key, dtype=np.uint32)
+    prf_key_t = torch.from_numpy(prf_key_np.view(np.int32)).to(device)
 
     # Warmup
     print(f"GPU {gpu_id}: Warming up...")

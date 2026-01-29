@@ -1,5 +1,5 @@
 """
-RMS24 Hint Generation - Loop-free version for Forge.
+RMS24 Hint Generation - Explicit loop reduction for Forge.
 """
 
 import torch
@@ -7,7 +7,7 @@ import torch.nn as nn
 
 
 class HintGenKernel(nn.Module):
-    """Gather + XOR reduction without Python loops."""
+    """Gather + XOR reduction with an explicit Python loop."""
     
     def forward(
         self,
