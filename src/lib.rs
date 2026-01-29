@@ -7,6 +7,7 @@ pub mod params;
 pub mod prf;
 pub mod hints;
 pub mod client;
+pub mod schema40;
 // pub mod server;
 
 #[cfg(feature = "cuda")]
