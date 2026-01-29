@@ -175,8 +175,8 @@ mod tests {
 
     #[test]
     fn test_find_median_cutoff() {
-        let values = vec![10, 30, 20, 40];
-        let cutoff = find_median_cutoff(&values);
+        let mut values = vec![10, 30, 20, 40];
+        let cutoff = find_median_cutoff(&mut values);
         assert_eq!(cutoff, 30); // sorted: [10,20,30,40], mid=2, val=30
     }
 
@@ -191,8 +191,8 @@ mod tests {
     #[test]
     fn test_median_cutoff_collision() {
         // Two middle values are the same
-        let values = vec![10, 20, 20, 40];
-        let cutoff = find_median_cutoff(&values);
+        let mut values = vec![10, 20, 20, 40];
+        let cutoff = find_median_cutoff(&mut values);
         assert_eq!(cutoff, 0); // Collision returns 0
     }
 

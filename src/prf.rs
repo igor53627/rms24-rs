@@ -5,7 +5,7 @@
 //! - GPU-friendly (same implementation in CUDA kernel)
 //! - 12 rounds provides sufficient security margin
 
-use chacha20::cipher::{KeyIvInit, StreamCipher};
+use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use chacha20::ChaCha12;
 
 /// ChaCha12-based PRF for RMS24.
@@ -41,30 +41,20 @@ impl Prf {
         result
     }
 
-    /// Evaluate ChaCha12 PRF with domain separation.
-    ///
-    /// Nonce layout (12 bytes):
-    /// - bytes 0-3: domain tag (0 = select, 1 = offset)
-    /// - bytes 4-7: hint_id
-    /// - bytes 8-11: block
-    fn evaluate(&self, domain: u32, hint_id: u32, block: u32) -> [u8; 64] {
-        let mut nonce = [0u8; 12];
-        nonce[0..4].copy_from_slice(&domain.to_le_bytes());
-        nonce[4..8].copy_from_slice(&hint_id.to_le_bytes());
-        nonce[8..12].copy_from_slice(&block.to_le_bytes());
-
-        let mut cipher = ChaCha12::new((&self.key).into(), (&nonce).into());
-        let mut output = [0u8; 64];
-        cipher.apply_keystream(&mut output);
-        output
-    }
-
     /// 32-bit value for block selection.
     ///
     /// Used to determine if a block is in the "low" or "high" subset
     /// relative to the median cutoff.
     pub fn select(&self, hint_id: u32, block: u32) -> u32 {
-        let output = self.evaluate(0, hint_id, block);
+        let mut nonce = [0u8; 12];
+        nonce[0..4].copy_from_slice(&0u32.to_le_bytes());
+        nonce[4..8].copy_from_slice(&hint_id.to_le_bytes());
+
+        let mut cipher = ChaCha12::new((&self.key).into(), (&nonce).into());
+        cipher.seek((block as u64) * 64);
+
+        let mut output = [0u8; 64];
+        cipher.apply_keystream(&mut output);
         u32::from_le_bytes(output[0..4].try_into().unwrap())
     }
 
@@ -72,7 +62,15 @@ impl Prf {
     ///
     /// Uses 64 bits to avoid modular bias when computing offset % block_size.
     pub fn offset(&self, hint_id: u32, block: u32) -> u64 {
-        let output = self.evaluate(1, hint_id, block);
+        let mut nonce = [0u8; 12];
+        nonce[0..4].copy_from_slice(&1u32.to_le_bytes());
+        nonce[4..8].copy_from_slice(&hint_id.to_le_bytes());
+
+        let mut cipher = ChaCha12::new((&self.key).into(), (&nonce).into());
+        cipher.seek((block as u64) * 64);
+
+        let mut output = [0u8; 64];
+        cipher.apply_keystream(&mut output);
         u64::from_le_bytes(output[0..8].try_into().unwrap())
     }
 
@@ -256,5 +254,15 @@ mod tests {
         // All values should be different (statistically)
         let unique: std::collections::HashSet<_> = values.iter().collect();
         assert!(unique.len() > 90); // Allow some collisions
+    }
+
+    #[test]
+    fn test_select_matches_select_vector() {
+        let prf = Prf::new([7u8; 32]);
+        let num_blocks = 16;
+        let values = prf.select_vector(42, num_blocks);
+        for (block, value) in values.iter().enumerate() {
+            assert_eq!(*value, prf.select(42, block as u32));
+        }
     }
 }
