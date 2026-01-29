@@ -74,7 +74,12 @@ mod tests {
     fn test_tag_keccak() {
         let key = [0x11u8; 20];
         let tag = Tag::from_key(&key);
-        assert_eq!(tag.0.len(), 8);
+        let mut hasher = Keccak256::new();
+        hasher.update(&key);
+        let digest = hasher.finalize();
+        let mut expected = [0u8; 8];
+        expected.copy_from_slice(&digest[..8]);
+        assert_eq!(tag.0, expected);
     }
 
     #[test]
@@ -85,6 +90,18 @@ mod tests {
         let bytes = entry.encode();
         assert_eq!(bytes.len(), 40);
         let decoded = AccountEntry40::decode(&bytes).unwrap();
+        assert_eq!(decoded.value, value);
+        assert_eq!(decoded.tag.0, tag.0);
+    }
+
+    #[test]
+    fn test_storage_entry_encode_decode() {
+        let value = [0xCCu8; 32];
+        let tag = Tag([0xDDu8; 8]);
+        let entry = StorageEntry40 { value, tag };
+        let bytes = entry.encode();
+        assert_eq!(bytes.len(), 40);
+        let decoded = StorageEntry40::decode(&bytes).unwrap();
         assert_eq!(decoded.value, value);
         assert_eq!(decoded.tag.0, tag.0);
     }
