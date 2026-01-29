@@ -4,7 +4,6 @@ RMS24 Hint Generation - Loop-free version for Forge.
 
 import torch
 import torch.nn as nn
-from functools import reduce
 
 
 class HintGenKernel(nn.Module):
@@ -22,12 +21,10 @@ class HintGenKernel(nn.Module):
         # Apply mask: zero out invalid
         gathered = gathered * mask.unsqueeze(-1).long()
         
-        # XOR reduce via cumulative XOR and take last
-        # Use reduce with bitwise_xor
-        result = reduce(
-            torch.bitwise_xor,
-            [gathered[:, i, :] for i in range(gathered.shape[1])]
-        )
+        # XOR reduction across subset dimension
+        result = gathered[:, 0, :].clone()
+        for i in range(1, gathered.shape[1]):
+            result ^= gathered[:, i, :]
         
         return result
 

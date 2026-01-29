@@ -179,7 +179,7 @@ torch::Tensor forward(torch::Tensor entries, torch::Tensor padded_indices, torch
     ref_model = PytorchModel()
     forge_model = ForgeModel()
     
-    def benchmark(model, name):
+    def benchmark(model):
         # Warmup
         for _ in range(warmup):
             _ = model(entries, indices, mask)
@@ -212,10 +212,10 @@ torch::Tensor forward(torch::Tensor entries, torch::Tensor padded_indices, torch
     # Benchmark
     print("\nBenchmarking...")
     
-    ref_time, ref_tp = benchmark(ref_model, "PyTorch")
+    ref_time, ref_tp = benchmark(ref_model)
     print(f"PyTorch Reference:  {ref_time:.3f} ms  ({ref_tp:.0f} hints/sec)")
     
-    forge_time, forge_tp = benchmark(forge_model, "Forge")
+    forge_time, forge_tp = benchmark(forge_model)
     print(f"Forge-Optimized:    {forge_time:.3f} ms  ({forge_tp:.0f} hints/sec)")
     
     speedup = ref_time / forge_time
@@ -264,6 +264,7 @@ def benchmark_large_scale():
             )
             results.append(result)
         except Exception as e:
+            # Broad catch to keep batch benchmarking across configs.
             print(f"Failed: {e}")
             results.append({"error": str(e)})
     
@@ -288,7 +289,7 @@ def main(
     large: bool = False,
 ):
     if large:
-        results = benchmark_large_scale.remote()
+        benchmark_large_scale.remote()
     else:
         result = benchmark_kernels.remote(
             num_entries=num_entries,

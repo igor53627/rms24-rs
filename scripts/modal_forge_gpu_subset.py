@@ -332,7 +332,7 @@ def benchmark_gpu(
     for i in range(iterations):
         torch.cuda.synchronize()
         start = time.perf_counter()
-        parities = cuda_module.prf_hint_gen(
+        cuda_module.prf_hint_gen(
             entries, prf_key_t, block_size, num_blocks, num_hints, hint_start
         )
         torch.cuda.synchronize()
@@ -389,8 +389,8 @@ def main(
         num_hints = 2 * lambda_param * block_size
         print(f"Auto-calculated hints: λ={lambda_param}, block_size={block_size:,}")
 
-    # Generate random PRF key (8 × i32, must be in signed int32 range for PyTorch)
-    prf_key = [int.from_bytes(secrets.token_bytes(4), 'little') & 0x7FFFFFFF for _ in range(8)]
+    # Generate random PRF key (8 x 32-bit words).
+    prf_key = [int.from_bytes(secrets.token_bytes(4), "little") for _ in range(8)]
 
     print("=" * 70)
     print("RMS24 GPU SUBSET GENERATION BENCHMARK")
@@ -399,7 +399,7 @@ def main(
     print(f"Lambda: {lambda_param}")
     print(f"Total hints: {num_hints:,}")
     print(f"Database: {db_path}")
-    print(f"PRF on GPU: YES (no CPU subset generation)")
+    print("PRF on GPU: YES (no CPU subset generation)")
     print()
 
     start_time = time.time()
@@ -442,8 +442,8 @@ def main(
         print(f"Avg kernel time: {avg_median_ms:.3f} ms")
         print(f"Combined throughput: {total_hints_per_sec:,.0f} hints/sec")
         print(f"Wall time: {total_time:.1f}s")
-        print(f"Subset gen time: 0s (GPU PRF)")
-        print(f"Data transfer: 0 GB (no subset data)")
+        print("Subset gen time: 0s (GPU PRF)")
+        print("Data transfer: 0 GB (no subset data)")
 
         print("\nPer-GPU results:")
         print(f"{'GPU':<6} {'Hints':<8} {'Median ms':<12} {'Hints/sec':<15}")
@@ -479,7 +479,7 @@ def main(
         output["summary"]["num_entries"] = successful[0]["num_entries"]
         output["summary"]["avg_median_ms"] = sum(r["median_ms"] for r in successful) / len(successful)
 
-    print(f"\n--- JSON ---")
+    print("\n--- JSON ---")
     print(json.dumps(output, indent=2))
 
     return output
