@@ -9,10 +9,11 @@ pub mod hints;
 pub mod client;
 pub mod schema40;
 pub mod messages;
-// pub mod server;
+pub mod server;
 
 #[cfg(feature = "cuda")]
 pub mod gpu;
 
 pub use params::Params;
 pub use prf::Prf;
+pub use client::OnlineClient;
