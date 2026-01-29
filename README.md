@@ -8,6 +8,13 @@ Rust implementation of RMS24 single-server PIR with CUDA-accelerated hint genera
 - 8-byte TAG fingerprints for keyword PIR (Plinko-style)
 - CUDA acceleration for hint generation (optional `cuda` feature)
 
+## Docs
+
+- [Feature Flags](docs/FEATURE_FLAGS.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [API Endpoints](docs/API_ENDPOINTS.md)
+
 ## Building
 
 ```bash
