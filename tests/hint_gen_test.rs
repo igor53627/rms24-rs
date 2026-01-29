@@ -1,6 +1,6 @@
 //! Integration tests for hint generation.
 
-use rms24::{client::Client, params::Params};
+use rms24::{client::Client, params::Params, prf::Prf};
 
 #[test]
 fn test_cpu_hint_generation_roundtrip() {
@@ -9,7 +9,7 @@ fn test_cpu_hint_generation_roundtrip() {
     let security_param = 4;
 
     let params = Params::new(num_entries, entry_size, security_param);
-    let mut client = Client::new(params.clone());
+    let mut client = Client::with_prf(params.clone(), Prf::new([0u8; 32]));
 
     // Create test database with unique entries
     let mut db = vec![0u8; num_entries as usize * entry_size];
@@ -40,7 +40,7 @@ fn test_cpu_hint_generation_roundtrip() {
 #[test]
 fn test_hint_coverage() {
     let params = Params::new(100, 40, 8);
-    let mut client = Client::new(params.clone());
+    let mut client = Client::with_prf(params.clone(), Prf::new([0u8; 32]));
     let db = vec![0xFFu8; 100 * 40];
 
     client.generate_hints(&db);
@@ -57,7 +57,7 @@ fn test_hint_coverage() {
 #[test]
 fn test_backup_hints() {
     let params = Params::new(256, 40, 4);
-    let mut client = Client::new(params.clone());
+    let mut client = Client::with_prf(params.clone(), Prf::new([0u8; 32]));
     
     // Database with pattern
     let mut db = vec![0u8; 256 * 40];
@@ -86,8 +86,8 @@ fn test_deterministic_with_same_prf() {
     let params = Params::new(100, 40, 4);
     let prf_key = [0u8; 32];
     
-    let mut client1 = Client::with_prf(params.clone(), rms24::prf::Prf::new(prf_key));
-    let mut client2 = Client::with_prf(params, rms24::prf::Prf::new(prf_key));
+    let mut client1 = Client::with_prf(params.clone(), Prf::new(prf_key));
+    let mut client2 = Client::with_prf(params, Prf::new(prf_key));
     
     let db = vec![0x42u8; 100 * 40];
     
@@ -106,7 +106,7 @@ fn test_large_database() {
     // Test with larger database to ensure no panics
     let num_entries = 10_000u64;
     let params = Params::new(num_entries, 40, 4);
-    let mut client = Client::new(params);
+    let mut client = Client::with_prf(params, Prf::new([0u8; 32]));
     
     let db = vec![0u8; num_entries as usize * 40];
     client.generate_hints(&db);
