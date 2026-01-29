@@ -1,5 +1,7 @@
 //! Hint storage for RMS24.
 
+use serde::{Deserialize, Serialize};
+
 /// Precomputed subset for a single hint.
 /// Used to pass subset data to GPU without per-block PRF calls.
 pub struct HintSubset {
@@ -91,7 +93,7 @@ impl SubsetData {
 ///
 /// Indices 0..num_reg_hints are regular hints.
 /// Indices num_reg_hints..total are backup hints.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HintState {
     /// Median cutoff for subset selection. 0 = consumed/invalid.
     pub cutoffs: Vec<u32>,

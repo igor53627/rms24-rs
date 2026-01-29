@@ -7,11 +7,13 @@
 
 use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use chacha20::ChaCha12;
+use serde::{Deserialize, Serialize};
 
 /// ChaCha12-based PRF for RMS24.
 ///
 /// Uses ChaCha12 in counter mode with domain-separated nonces
 /// for select and offset operations.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Prf {
     key: [u8; 32],
 }

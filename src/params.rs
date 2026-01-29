@@ -1,10 +1,12 @@
 //! RMS24 parameters.
 
+use serde::{Deserialize, Serialize};
+
 /// Entry size: 32B value + 8B TAG fingerprint
 pub const ENTRY_SIZE: usize = 40;
 
 /// Parameters for RMS24 PIR scheme.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Params {
     pub num_entries: u64,
     pub entry_size: usize,

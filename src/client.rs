@@ -1,10 +1,15 @@
 //! RMS24 Client with hint generation.
 
 use crate::hints::{find_median_cutoff, xor_bytes_inplace, HintState, HintSubset};
+use crate::messages::ClientError;
 use crate::params::Params;
 use crate::prf::Prf;
-use rand::Rng;
+use bincode::Options;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 pub struct Client {
     pub params: Params,
@@ -173,9 +178,129 @@ impl Client {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct OnlineClient {
+    pub params: Params,
+    pub prf: Prf,
+    pub hints: HintState,
+    pub available_hints: Vec<usize>,
+    pub rng: ChaCha20Rng,
+    pub next_query_id: u64,
+}
+
+impl OnlineClient {
+    pub fn new(params: Params, prf: Prf, seed: u64) -> Self {
+        let hints = HintState::new(
+            params.num_reg_hints as usize,
+            params.num_backup_hints as usize,
+            params.entry_size,
+        );
+        let available_hints = (0..params.num_reg_hints as usize).collect();
+        Self {
+            params,
+            prf,
+            hints,
+            available_hints,
+            rng: ChaCha20Rng::seed_from_u64(seed),
+            next_query_id: 0,
+        }
+    }
+
+    pub fn serialize_state(&self) -> Result<Vec<u8>, ClientError> {
+        Self::bincode_options()
+            .serialize(self)
+            .map_err(|e| ClientError::SerializationError(e.to_string()))
+    }
+
+    pub fn deserialize_state(bytes: &[u8]) -> Result<Self, ClientError> {
+        let options = Self::bincode_options().with_limit(bytes.len() as u64);
+        let client: Self = options
+            .deserialize(bytes)
+            .map_err(|e| ClientError::SerializationError(e.to_string()))?;
+        client.validate_state()?;
+        Ok(client)
+    }
+
+    pub fn next_query_id(&mut self) -> u64 {
+        let id = self.next_query_id;
+        self.next_query_id += 1;
+        id
+    }
+
+    fn bincode_options() -> impl Options {
+        bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .allow_trailing_bytes()
+    }
+
+    fn validate_state(&self) -> Result<(), ClientError> {
+        if self.params.entry_size == 0 {
+            return Err(ClientError::SerializationError(
+                "entry_size must be greater than 0".to_string(),
+            ));
+        }
+
+        let num_reg = self.params.num_reg_hints as usize;
+        let num_backup = self.params.num_backup_hints as usize;
+        let total = num_reg + num_backup;
+        let hints = &self.hints;
+
+        if hints.cutoffs.len() != total
+            || hints.extra_blocks.len() != total
+            || hints.extra_offsets.len() != total
+            || hints.parities.len() != total
+            || hints.flips.len() != total
+        {
+            return Err(ClientError::SerializationError(
+                "hint vector length mismatch".to_string(),
+            ));
+        }
+
+        if hints.backup_parities_high.len() != num_backup {
+            return Err(ClientError::SerializationError(
+                "backup parity length mismatch".to_string(),
+            ));
+        }
+
+        let entry_size = self.params.entry_size;
+        if hints.parities.iter().any(|p| p.len() != entry_size) {
+            return Err(ClientError::SerializationError(
+                "parity length mismatch".to_string(),
+            ));
+        }
+        if hints
+            .backup_parities_high
+            .iter()
+            .any(|p| p.len() != entry_size)
+        {
+            return Err(ClientError::SerializationError(
+                "backup parity length mismatch".to_string(),
+            ));
+        }
+
+        let mut seen = HashSet::new();
+        for &hint in &self.available_hints {
+            if hint >= num_reg {
+                return Err(ClientError::SerializationError(
+                    "available hint out of range".to_string(),
+                ));
+            }
+            if !seen.insert(hint) {
+                return Err(ClientError::SerializationError(
+                    "duplicate available hint".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::RngCore;
 
     #[test]
     fn test_generate_hints_basic() {
@@ -250,4 +375,31 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_client_state_roundtrip() {
+        let params = Params::new(16, 40, 2);
+        let mut client = OnlineClient::new(params, Prf::random(), 1234u64);
+        let data = client.serialize_state().unwrap();
+        let mut client2 = OnlineClient::deserialize_state(&data).unwrap();
+        assert_eq!(client.prf.key(), client2.prf.key());
+        let r1 = client.rng.next_u64();
+        let r2 = client2.rng.next_u64();
+        assert_eq!(r1, r2);
+        let id1 = client.next_query_id();
+        let id2 = client2.next_query_id();
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_client_state_invalid_available_hints() {
+        let params = Params::new(16, 40, 2);
+        let mut client = OnlineClient::new(params, Prf::random(), 1234u64);
+        let num_reg = client.params.num_reg_hints as usize;
+        client.available_hints.push(num_reg + 1);
+        let data = client.serialize_state().unwrap();
+        let result = OnlineClient::deserialize_state(&data);
+        assert!(matches!(result, Err(ClientError::SerializationError(_))));
+    }
+
 }
