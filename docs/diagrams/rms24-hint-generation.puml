@@ -1,0 +1,40 @@
+@startuml
+left to right direction
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+
+title RMS24 Keyword PIR - Hint Generation (Client Hints in TEE)
+
+rectangle "Build / Update Pipeline" as PIPE {
+  component "Reth Node\n(state source)" as RETH
+  component "ETL / Builder\n(schema40 + params)" as ETL
+}
+
+rectangle "Host Machine" as HOST {
+  database "RMS24 DB Snapshot\n40B entries" as DB
+}
+
+rectangle "TEE Enclave" as TEE {
+  component "RMS24 Client\n(Phase 1+2 Hint Gen)" as CLIENT
+  database "Hint Store\n(client hints)" as HSTORE
+  database "Metadata\n(seeds, params)" as META
+  component "PRF Key\n(secret)" as PRF
+}
+
+' --- Update / provisioning flows ---
+RETH -[#00AA00]-> ETL : state updates
+ETL  -[#00AA00]-> DB  : build DB
+ETL  -[#00AA00]-> META : seeds + params
+
+' --- Hint generation flows ---
+DB   -[#0000FF]-> CLIENT : stream entries
+META -[#0000FF]-> CLIENT : params
+PRF  -[#0000FF]-> CLIENT : key
+CLIENT -[#0000FF]-> HSTORE : computed hints
+
+legend right
+|= Color |= Meaning |
+|<#0000FF>Blue| Data flow |
+|<#00AA00>Green| Update / provisioning |
+endlegend
+@enduml

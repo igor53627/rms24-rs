@@ -1,0 +1,59 @@
+@startuml
+left to right direction
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+
+title RMS24 Keyword PIR - Query Architecture
+
+rectangle "Build / Update Pipeline" as PIPE {
+  component "Reth Node\n(state source)" as RETH
+  component "ETL / Builder\n(schema40 + params)" as ETL
+}
+
+rectangle "Host Machine" as HOST {
+  component "PIR Server\n(RMS24)" as PIR
+  database  "RMS24 DB\n40B entries" as DB
+}
+
+rectangle "TEE Enclave" as TEE {
+  component "Query Gateway\n(client-in-TEE)" as GW
+  component "Cuckoo Addressing\n(3 hashes)" as CUCKOO
+  component "Tag Derivation\nKeccak(key)[0..8]" as TAG
+  component "RMS24 Client\n(query gen + decode)" as CLIENT
+  database  "Metadata\n(seeds, params)" as META
+}
+
+component "Thin Client\n(wallet/app)" as APP
+component "Attestation Service\n(DCAP/IAS/Nitro)" as ATTEST
+
+' --- Update / provisioning flows ---
+RETH -[#00AA00]-> ETL : state updates
+ETL  -[#00AA00]-> DB  : build DB
+ETL  -[#00AA00]-> META : seeds + params
+
+' --- Query flows ---
+APP -[#0000FF]- GW : TLS
+APP -[#0000FF]-> GW : attestation challenge
+GW  -[#0000FF]-> APP : attestation quote
+APP -[#0000FF]-> ATTEST : verify quote
+ATTEST -[#0000FF]-> APP : attestation result
+
+GW -[#0000FF]-> CUCKOO : key (address / address + slot)
+GW -[#0000FF]-> TAG : key
+CUCKOO -[#0000FF]-> CLIENT
+TAG -[#0000FF]-> CLIENT
+META -[#0000FF]-> CUCKOO
+META -[#0000FF]-> CLIENT
+
+CLIENT -[#0000FF]-> PIR : RMS24 query
+PIR -[#0000FF]-> DB
+PIR -[#0000FF]-> CLIENT
+CLIENT -[#0000FF]-> GW : tag check + value
+GW -[#0000FF]-> APP
+
+legend right
+|= Color |= Meaning |
+|<#0000FF>Blue| Query / response |
+|<#00AA00>Green| Update / provisioning |
+endlegend
+@enduml
