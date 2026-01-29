@@ -7,7 +7,9 @@ use cudarc::driver::{CudaDevice, CudaFunction, CudaSlice, DeviceRepr, LaunchAsyn
 #[cfg(feature = "cuda")]
 use std::sync::Arc;
 
+#[cfg(feature = "cuda")]
 use crate::hints::SubsetData;
+#[cfg(feature = "cuda")]
 use crate::params::ENTRY_SIZE;
 
 /// RMS24 parameters for GPU kernel
@@ -112,12 +114,12 @@ impl GpuHintGenerator {
     ) -> Result<(Vec<HintOutput>, Vec<HintOutput>), cudarc::driver::DriverError> {
         // Validate input
         let expected_size = params.num_entries as usize * ENTRY_SIZE;
-        assert_eq!(entries.len(), expected_size, "entries size mismatch");
-        assert_eq!(
-            hint_meta.len(),
-            params.total_hints as usize,
-            "hint_meta size mismatch"
-        );
+        if entries.len() != expected_size {
+            return Err(cudarc::driver::DriverError::InvalidConfiguration);
+        }
+        if hint_meta.len() != params.total_hints as usize {
+            return Err(cudarc::driver::DriverError::InvalidConfiguration);
+        }
 
         // Copy data to GPU
         let d_entries = self.device.htod_sync_copy(entries)?;
@@ -172,7 +174,9 @@ impl GpuHintGenerator {
         params: Rms24Params,
     ) -> Result<Vec<HintOutput>, cudarc::driver::DriverError> {
         let expected_size = params.num_entries as usize * ENTRY_SIZE;
-        assert_eq!(entries.len(), expected_size, "entries size mismatch");
+        if entries.len() != expected_size {
+            return Err(cudarc::driver::DriverError::InvalidConfiguration);
+        }
 
         let num_hints = subset_data.starts.len();
 
