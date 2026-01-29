@@ -21,14 +21,26 @@ pub struct Update {
 
 #[derive(Debug, Error)]
 pub enum ServerError {
-    #[error("internal error: {0}")]
-    Internal(String),
+    #[error("subset out of range")]
+    SubsetOutOfRange,
+    #[error("entry size mismatch")]
+    EntrySizeMismatch,
+    #[error("db error: {0}")]
+    DbError(String),
 }
 
 #[derive(Debug, Error)]
 pub enum ClientError {
-    #[error("invalid request: {0}")]
-    InvalidRequest(String),
+    #[error("invalid index")]
+    InvalidIndex,
+    #[error("no available hint contains target")]
+    NoValidHint,
+    #[error("reply parity length mismatch")]
+    ParityLengthMismatch,
+    #[error("verification failed")]
+    VerificationFailed,
+    #[error("serialization error: {0}")]
+    SerializationError(String),
 }
 
 #[cfg(test)]
@@ -42,5 +54,17 @@ mod tests {
         assert_eq!(q.id, 7);
         assert_eq!(r.id, 7);
         assert_eq!(q.subset.len(), 2);
+    }
+
+    #[test]
+    fn test_server_error_variants_exist() {
+        let err = ServerError::SubsetOutOfRange;
+        assert!(matches!(err, ServerError::SubsetOutOfRange));
+    }
+
+    #[test]
+    fn test_client_error_variants_exist() {
+        let err = ClientError::InvalidIndex;
+        assert!(matches!(err, ClientError::InvalidIndex));
     }
 }
