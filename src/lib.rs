@@ -10,6 +10,7 @@ pub mod client;
 pub mod schema40;
 pub mod messages;
 pub mod server;
+pub mod updates;
 
 #[cfg(feature = "cuda")]
 pub mod gpu;

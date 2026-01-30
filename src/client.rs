@@ -2,6 +2,7 @@
 
 use crate::hints::{find_median_cutoff, xor_bytes_inplace, HintState, HintSubset};
 use crate::messages::ClientError;
+use crate::updates::replenish_from_backup;
 use crate::params::Params;
 use crate::prf::Prf;
 use bincode::Options;
@@ -335,7 +336,59 @@ impl OnlineClient {
         }
         xor_bytes_inplace(&mut result, hint_parity);
 
+        if let Some(pos) = self.available_hints.iter().position(|&hint| hint == real_hint) {
+            self.available_hints.swap_remove(pos);
+        }
+        self.replenish_hint(real_hint, index, &result)?;
+        self.available_hints.push(real_hint);
+
         Ok(result)
+    }
+
+    fn replenish_hint(
+        &mut self,
+        consumed_hint: usize,
+        target_index: u64,
+        target_entry: &[u8],
+    ) -> Result<(), ClientError> {
+        let num_reg = self.params.num_reg_hints as usize;
+        let num_backup = self.params.num_backup_hints as usize;
+        if num_backup == 0 {
+            return Ok(());
+        }
+        let total = num_reg + num_backup;
+        let backup_hint = self.hints.next_backup_idx;
+        if backup_hint < num_reg || backup_hint >= total {
+            return Err(ClientError::VerificationFailed);
+        }
+
+        let replenish = replenish_from_backup(
+            &self.params,
+            &self.prf,
+            &self.hints,
+            backup_hint,
+            target_index,
+            target_entry,
+        )
+        .ok_or(ClientError::VerificationFailed)?;
+
+        let target_block = self.params.block_of(target_index) as u32;
+        let target_offset = self.params.offset_in_block(target_index) as u32;
+        self.hints.cutoffs[consumed_hint] = replenish.cutoff;
+        self.hints.flips[consumed_hint] = replenish.flip;
+        self.hints.extra_blocks[consumed_hint] = target_block;
+        self.hints.extra_offsets[consumed_hint] = target_offset;
+        self.hints.parities[consumed_hint] = replenish.parity;
+
+        self.hints.cutoffs[backup_hint] = 0;
+        let next = if backup_hint + 1 < total {
+            backup_hint + 1
+        } else {
+            num_reg
+        };
+        self.hints.next_backup_idx = next;
+
+        Ok(())
     }
 
     fn bincode_options() -> impl Options {
@@ -565,6 +618,48 @@ mod tests {
             let idx = (*block as u64) * params.block_size + (*offset as u64);
             idx < params.num_entries
         }));
+    }
+
+    #[test]
+    fn test_hint_consumed_after_query() {
+        let params = Params::new(16, 4, 2);
+        let db = vec![0u8; (params.num_entries as usize) * params.entry_size];
+        let prf = Prf::random();
+        let mut offline = Client::with_prf(params.clone(), prf.clone());
+        offline.generate_hints(&db);
+        let mut client = OnlineClient::new(params.clone(), prf, 42);
+        client.hints = offline.hints.clone();
+        let server = crate::server::Server::new(
+            crate::server::InMemoryDb::new(db, params.entry_size).unwrap(),
+            params.block_size,
+        )
+        .unwrap();
+
+        let mut index = None;
+        for &hint_id in &client.available_hints {
+            let subset = client.build_subset_for_hint(hint_id);
+            if let Some((block, offset)) = subset.first().copied() {
+                let candidate = (block as u64) * params.block_size + (offset as u64);
+                if candidate < params.num_entries {
+                    index = Some(candidate);
+                    break;
+                }
+            }
+        }
+        let index = index.expect("expected at least one hint to cover an entry");
+        let before_len = client.available_hints.len();
+        let before_backup_idx = client.hints.next_backup_idx;
+        let _ = client.query(&server, index).unwrap();
+        assert_eq!(client.available_hints.len(), before_len);
+        let num_reg = params.num_reg_hints as usize;
+        let num_backup = params.num_backup_hints as usize;
+        let total = num_reg + num_backup;
+        let expected = if before_backup_idx + 1 < total {
+            before_backup_idx + 1
+        } else {
+            num_reg
+        };
+        assert_eq!(client.hints.next_backup_idx, expected);
     }
 
 }
