@@ -13,6 +13,7 @@ pub mod server;
 pub mod updates;
 pub mod online;
 pub mod online_framing;
+pub mod online_transport;
 
 #[cfg(feature = "cuda")]
 pub mod gpu;
