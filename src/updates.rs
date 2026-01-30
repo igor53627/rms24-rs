@@ -15,6 +15,7 @@ pub fn replenish_from_backup(
     prf: &Prf,
     hints: &HintState,
     backup_hint: usize,
+    backup_prf_id: u32,
     target_index: u64,
     target_entry: &[u8],
 ) -> Option<ReplenishResult> {
@@ -28,7 +29,7 @@ pub fn replenish_from_backup(
     }
 
     let target_block = params.block_of(target_index) as u32;
-    let select = prf.select(backup_hint as u32, target_block);
+    let select = prf.select(backup_prf_id, target_block);
     let target_in_low = select < cutoff;
 
     let num_reg = params.num_reg_hints as usize;

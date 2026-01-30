@@ -184,6 +184,7 @@ pub struct OnlineClient {
     pub params: Params,
     pub prf: Prf,
     pub hints: HintState,
+    pub hint_prf_ids: Vec<u32>,
     pub available_hints: Vec<usize>,
     pub rng: ChaCha20Rng,
     pub next_query_id: u64,
@@ -197,10 +198,13 @@ impl OnlineClient {
             params.entry_size,
         );
         let available_hints = (0..params.num_reg_hints as usize).collect();
+        let total = (params.num_reg_hints + params.num_backup_hints) as usize;
+        let hint_prf_ids = (0..total).map(|id| id as u32).collect();
         Self {
             params,
             prf,
             hints,
+            hint_prf_ids,
             available_hints,
             rng: ChaCha20Rng::seed_from_u64(seed),
             next_query_id: 0,
@@ -239,6 +243,7 @@ impl OnlineClient {
         let block_size = self.params.block_size;
         let num_entries = self.params.num_entries;
         let flipped = self.hints.flips[hint_id];
+        let prf_id = self.hint_prf_ids[hint_id];
 
         let mut push_if_in_range = |block: u32, offset: u32| {
             let offset_u64 = offset as u64;
@@ -256,8 +261,8 @@ impl OnlineClient {
         };
 
         for block in 0..num_blocks {
-            let select = self.prf.select(hint_id as u32, block);
-            let offset = (self.prf.offset(hint_id as u32, block) % block_size) as u32;
+            let select = self.prf.select(prf_id, block);
+            let offset = (self.prf.offset(prf_id, block) % block_size) as u32;
             let is_selected = if flipped { select >= cutoff } else { select < cutoff };
             if is_selected {
                 push_if_in_range(block, offset);
@@ -365,10 +370,11 @@ impl OnlineClient {
             if cutoff == 0 {
                 continue;
             }
+            let prf_id = self.hint_prf_ids[hint_id];
 
-            let select = self.prf.select(hint_id as u32, block);
+            let select = self.prf.select(prf_id, block);
             let picked_offset =
-                (self.prf.offset(hint_id as u32, block) % self.params.block_size) as u32;
+                (self.prf.offset(prf_id, block) % self.params.block_size) as u32;
             if picked_offset != offset {
                 if hint_id < num_reg {
                     let extra_block = self.hints.extra_blocks[hint_id];
@@ -425,12 +431,14 @@ impl OnlineClient {
         if backup_hint < num_reg || backup_hint >= total {
             return Err(ClientError::VerificationFailed);
         }
+        let backup_prf_id = self.hint_prf_ids[backup_hint];
 
         let replenish = replenish_from_backup(
             &self.params,
             &self.prf,
             &self.hints,
             backup_hint,
+            backup_prf_id,
             target_index,
             target_entry,
         )
@@ -443,6 +451,7 @@ impl OnlineClient {
         self.hints.extra_blocks[consumed_hint] = target_block;
         self.hints.extra_offsets[consumed_hint] = target_offset;
         self.hints.parities[consumed_hint] = replenish.parity;
+        self.hint_prf_ids[consumed_hint] = backup_prf_id;
 
         self.hints.cutoffs[backup_hint] = 0;
         let next = if backup_hint + 1 < total {
@@ -478,6 +487,7 @@ impl OnlineClient {
             || hints.extra_offsets.len() != total
             || hints.parities.len() != total
             || hints.flips.len() != total
+            || self.hint_prf_ids.len() != total
         {
             return Err(ClientError::SerializationError(
                 "hint vector length mismatch".to_string(),
@@ -503,6 +513,15 @@ impl OnlineClient {
         {
             return Err(ClientError::SerializationError(
                 "backup parity length mismatch".to_string(),
+            ));
+        }
+        if self
+            .hint_prf_ids
+            .iter()
+            .any(|&id| id as usize >= total)
+        {
+            return Err(ClientError::SerializationError(
+                "hint prf id out of range".to_string(),
             ));
         }
 
