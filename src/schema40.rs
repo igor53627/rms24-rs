@@ -123,29 +123,36 @@ impl AccountEntry40 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct StorageEntry40 {
-    pub value: [u8; 32],
+    pub value: [u8; STORAGE_VALUE_SIZE],
     pub tag: Tag,
 }
 
 impl StorageEntry40 {
-    pub fn encode(&self) -> [u8; 40] {
-        let mut out = [0u8; 40];
-        out[..32].copy_from_slice(&self.value);
-        out[32..].copy_from_slice(&self.tag.0);
-        out
+    pub fn new(value: &[u8; 32], address: &[u8; 20], slot_key: &[u8; 32]) -> Self {
+        Self {
+            value: *value,
+            tag: Tag::from_address_slot(address, slot_key),
+        }
     }
 
-    pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 40 {
-            return None;
+    pub fn to_bytes(&self) -> [u8; ENTRY_SIZE] {
+        let mut bytes = [0u8; ENTRY_SIZE];
+        bytes[0..32].copy_from_slice(&self.value);
+        bytes[32..40].copy_from_slice(self.tag.as_bytes());
+        bytes
+    }
+
+    pub fn from_bytes(bytes: &[u8; ENTRY_SIZE]) -> Self {
+        let mut value = [0u8; STORAGE_VALUE_SIZE];
+        value.copy_from_slice(&bytes[0..32]);
+        let mut tag_bytes = [0u8; TAG_SIZE];
+        tag_bytes.copy_from_slice(&bytes[32..40]);
+        Self {
+            value,
+            tag: Tag(tag_bytes),
         }
-        let mut value = [0u8; 32];
-        value.copy_from_slice(&bytes[..32]);
-        let mut tag = [0u8; 8];
-        tag.copy_from_slice(&bytes[32..]);
-        Some(Self { value, tag: Tag(tag) })
     }
 }
 
@@ -221,14 +228,24 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_entry_encode_decode() {
-        let value = [0xCCu8; 32];
-        let tag = Tag([0xDDu8; 8]);
-        let entry = StorageEntry40 { value, tag };
-        let bytes = entry.encode();
-        assert_eq!(bytes.len(), 40);
-        let decoded = StorageEntry40::decode(&bytes).unwrap();
-        assert_eq!(decoded.value, value);
-        assert_eq!(decoded.tag.0, tag.0);
+    fn test_storage_entry_roundtrip() {
+        let value = [0x77u8; 32];
+        let address = [0xABu8; 20];
+        let slot_key = [0xCDu8; 32];
+
+        let entry = StorageEntry40::new(&value, &address, &slot_key);
+        let bytes = entry.to_bytes();
+        let recovered = StorageEntry40::from_bytes(&bytes);
+
+        assert_eq!(entry.value, recovered.value);
+        assert_eq!(entry.tag, recovered.tag);
+    }
+
+    #[test]
+    fn test_storage_no_padding() {
+        let entry = StorageEntry40::default();
+        let bytes = entry.to_bytes();
+        assert_eq!(&bytes[0..32], &[0u8; 32]);
+        assert_eq!(&bytes[32..40], &[0u8; 8]);
     }
 }
