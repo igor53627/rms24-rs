@@ -3,6 +3,7 @@ use rms24::client::Client;
 use rms24::server::{InMemoryDb, Server};
 use std::fs;
 use std::path::PathBuf;
+use std::collections::HashSet;
 
 #[test]
 fn test_real_slice_optional() {
@@ -40,11 +41,44 @@ fn test_real_slice_optional() {
         Err(_) => return,
     };
 
-    let indices = [0u64, 1u64, num_entries.saturating_sub(1)];
-    for index in indices {
-        if index >= num_entries {
+    let mut indices = Vec::new();
+    let mut seen = HashSet::new();
+    let num_blocks = params.num_blocks as u32;
+    let block_size = params.block_size;
+
+    for &hint_id in &client.available_hints {
+        let cutoff = client.hints.cutoffs[hint_id];
+        if cutoff == 0 {
             continue;
         }
+        let flipped = client.hints.flips[hint_id];
+        for block in 0..num_blocks {
+            let select = client.prf.select(hint_id as u32, block);
+            let offset = (client.prf.offset(hint_id as u32, block) % block_size) as u32;
+            let is_selected = if flipped { select >= cutoff } else { select < cutoff };
+            if !is_selected {
+                continue;
+            }
+            let idx = (block as u64) * block_size + (offset as u64);
+            if idx >= num_entries {
+                continue;
+            }
+            if seen.insert(idx) {
+                indices.push(idx);
+                break;
+            }
+        }
+
+        if indices.len() >= 3 {
+            break;
+        }
+    }
+
+    if indices.is_empty() {
+        return;
+    }
+
+    for index in indices {
         let got = client.query(&server, index).unwrap();
         let start = index as usize * entry_size;
         let expected = db[start..start + entry_size].to_vec();
