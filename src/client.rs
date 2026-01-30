@@ -227,6 +227,117 @@ impl OnlineClient {
         id
     }
 
+    fn build_subset_for_hint(&self, hint_id: usize) -> Vec<(u32, u32)> {
+        let cutoff = self.hints.cutoffs[hint_id];
+        if cutoff == 0 {
+            return Vec::new();
+        }
+
+        let mut subset = Vec::new();
+        let num_blocks = self.params.num_blocks as u32;
+        let block_size = self.params.block_size;
+        let num_entries = self.params.num_entries;
+        let flipped = self.hints.flips[hint_id];
+
+        let mut push_if_in_range = |block: u32, offset: u32| {
+            let offset_u64 = offset as u64;
+            if offset_u64 >= block_size {
+                return;
+            }
+            let entry_idx = (block as u64)
+                .checked_mul(block_size)
+                .and_then(|base| base.checked_add(offset_u64));
+            if let Some(idx) = entry_idx {
+                if idx < num_entries {
+                    subset.push((block, offset));
+                }
+            }
+        };
+
+        for block in 0..num_blocks {
+            let select = self.prf.select(hint_id as u32, block);
+            let offset = (self.prf.offset(hint_id as u32, block) % block_size) as u32;
+            let is_selected = if flipped { select >= cutoff } else { select < cutoff };
+            if is_selected {
+                push_if_in_range(block, offset);
+            }
+        }
+
+        let extra_block = self.hints.extra_blocks[hint_id];
+        if extra_block != u32::MAX {
+            let extra_offset = self.hints.extra_offsets[hint_id];
+            push_if_in_range(extra_block, extra_offset);
+        }
+
+        subset
+    }
+
+    pub fn query<D: crate::server::Db>(
+        &mut self,
+        server: &crate::server::Server<D>,
+        index: u64,
+    ) -> Result<Vec<u8>, ClientError> {
+        if index >= self.params.num_entries {
+            return Err(ClientError::InvalidIndex);
+        }
+
+        let target_block = self.params.block_of(index) as u32;
+        let target_offset = self.params.offset_in_block(index) as u32;
+
+        let mut candidates = Vec::new();
+        for &hint_id in &self.available_hints {
+            let subset = self.build_subset_for_hint(hint_id);
+            if subset
+                .iter()
+                .any(|(block, offset)| *block == target_block && *offset == target_offset)
+            {
+                candidates.push((hint_id, subset));
+            }
+        }
+
+        if candidates.is_empty() {
+            return Err(ClientError::NoValidHint);
+        }
+
+        let id = self.next_query_id();
+        let candidate_idx = self.rng.gen_range(0..candidates.len());
+        let (real_hint, mut real_subset) = candidates.swap_remove(candidate_idx);
+        if let Some(pos) = real_subset
+            .iter()
+            .position(|(block, offset)| *block == target_block && *offset == target_offset)
+        {
+            real_subset.swap_remove(pos);
+        }
+
+        let dummy_hint = self.available_hints[self.rng.gen_range(0..self.available_hints.len())];
+        let dummy_subset = self.build_subset_for_hint(dummy_hint);
+
+        let real_query = crate::messages::Query {
+            id,
+            subset: real_subset,
+        };
+        let dummy_query = crate::messages::Query {
+            id,
+            subset: dummy_subset,
+        };
+
+        let real_reply = server
+            .answer(&real_query)
+            .map_err(|_| ClientError::VerificationFailed)?;
+        let _dummy_reply = server
+            .answer(&dummy_query)
+            .map_err(|_| ClientError::VerificationFailed)?;
+
+        let mut result = real_reply.parity;
+        let hint_parity = &self.hints.parities[real_hint];
+        if result.len() != hint_parity.len() {
+            return Err(ClientError::ParityLengthMismatch);
+        }
+        xor_bytes_inplace(&mut result, hint_parity);
+
+        Ok(result)
+    }
+
     fn bincode_options() -> impl Options {
         bincode::DefaultOptions::new()
             .with_fixint_encoding()
@@ -400,6 +511,60 @@ mod tests {
         let data = client.serialize_state().unwrap();
         let result = OnlineClient::deserialize_state(&data);
         assert!(matches!(result, Err(ClientError::SerializationError(_))));
+    }
+
+    #[test]
+    fn test_query_round_trip_basic() {
+        let params = Params::new(16, 4, 2);
+        let db = (0..(16 * 4)).map(|i| i as u8).collect::<Vec<u8>>();
+        let prf = Prf::random();
+        let mut offline = Client::with_prf(params.clone(), prf.clone());
+        offline.generate_hints(&db);
+        let mut client = OnlineClient::new(params.clone(), prf, 42);
+        client.hints = offline.hints.clone();
+        let server = crate::server::Server::new(
+            crate::server::InMemoryDb::new(db, 4).unwrap(),
+            params.block_size,
+        )
+        .unwrap();
+
+        let mut index = None;
+        for &hint_id in &client.available_hints {
+            let subset = client.build_subset_for_hint(hint_id);
+            if let Some((block, offset)) = subset.first().copied() {
+                let candidate = (block as u64) * params.block_size + (offset as u64);
+                if candidate < params.num_entries {
+                    index = Some(candidate);
+                    break;
+                }
+            }
+        }
+        let index = index.expect("expected at least one hint to cover an entry");
+        let result = client.query(&server, index).unwrap();
+        let expected = vec![
+            (index * 4) as u8,
+            (index * 4 + 1) as u8,
+            (index * 4 + 2) as u8,
+            (index * 4 + 3) as u8,
+        ];
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_build_subset_skips_out_of_range_entries() {
+        let params = Params::new(5, 1, 1);
+        let mut client = OnlineClient::new(params.clone(), Prf::random(), 0);
+        let hint_id = 0;
+        client.hints.cutoffs[hint_id] = u32::MAX;
+        client.hints.flips[hint_id] = false;
+        client.hints.extra_blocks[hint_id] = 1;
+        client.hints.extra_offsets[hint_id] = 2;
+
+        let subset = client.build_subset_for_hint(hint_id);
+        assert!(subset.iter().all(|(block, offset)| {
+            let idx = (*block as u64) * params.block_size + (*offset as u64);
+            idx < params.num_entries
+        }));
     }
 
 }
