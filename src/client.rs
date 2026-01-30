@@ -345,6 +345,70 @@ impl OnlineClient {
         Ok(result)
     }
 
+    pub fn apply_update(&mut self, update: &crate::messages::Update) -> Result<(), ClientError> {
+        if update.index >= self.params.num_entries {
+            return Err(ClientError::InvalidIndex);
+        }
+        if update.old_entry.len() != self.params.entry_size
+            || update.new_entry.len() != self.params.entry_size
+        {
+            return Err(ClientError::ParityLengthMismatch);
+        }
+
+        let num_reg = self.params.num_reg_hints as usize;
+        let num_total = (self.params.num_reg_hints + self.params.num_backup_hints) as usize;
+        let block = self.params.block_of(update.index) as u32;
+        let offset = self.params.offset_in_block(update.index) as u32;
+
+        for hint_id in 0..num_total {
+            let cutoff = self.hints.cutoffs[hint_id];
+            if cutoff == 0 {
+                continue;
+            }
+
+            let select = self.prf.select(hint_id as u32, block);
+            let picked_offset =
+                (self.prf.offset(hint_id as u32, block) % self.params.block_size) as u32;
+            if picked_offset != offset {
+                if hint_id < num_reg {
+                    let extra_block = self.hints.extra_blocks[hint_id];
+                    let extra_offset = self.hints.extra_offsets[hint_id];
+                    if extra_block == block && extra_offset == offset {
+                        xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.old_entry);
+                        xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.new_entry);
+                    }
+                }
+                continue;
+            }
+
+            if hint_id < num_reg {
+                let flipped = self.hints.flips[hint_id];
+                let is_selected = if flipped { select >= cutoff } else { select < cutoff };
+                if is_selected {
+                    xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.old_entry);
+                    xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.new_entry);
+                }
+            } else {
+                let backup_idx = hint_id - num_reg;
+                if select < cutoff {
+                    xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.old_entry);
+                    xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.new_entry);
+                } else {
+                    xor_bytes_inplace(
+                        &mut self.hints.backup_parities_high[backup_idx],
+                        &update.old_entry,
+                    );
+                    xor_bytes_inplace(
+                        &mut self.hints.backup_parities_high[backup_idx],
+                        &update.new_entry,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn replenish_hint(
         &mut self,
         consumed_hint: usize,
@@ -660,6 +724,47 @@ mod tests {
             num_reg
         };
         assert_eq!(client.hints.next_backup_idx, expected);
+    }
+
+    #[test]
+    fn test_point_update_round_trip() {
+        let params = Params::new(8, 4, 2);
+        let db = vec![0u8; (params.num_entries as usize) * params.entry_size];
+        let prf = Prf::random();
+        let mut offline = Client::with_prf(params.clone(), prf.clone());
+        offline.generate_hints(&db);
+        let mut client = OnlineClient::new(params.clone(), prf, 1);
+        client.hints = offline.hints.clone();
+        let mut server = crate::server::Server::new(
+            crate::server::InMemoryDb::new(db, params.entry_size).unwrap(),
+            params.block_size,
+        )
+        .unwrap();
+
+        let mut index = None;
+        for &hint_id in &client.available_hints {
+            let subset = client.build_subset_for_hint(hint_id);
+            if let Some((block, offset)) = subset.first().copied() {
+                let candidate = (block as u64) * params.block_size + (offset as u64);
+                if candidate < params.num_entries {
+                    index = Some(candidate);
+                    break;
+                }
+            }
+        }
+        let index = index.expect("expected at least one hint to cover an entry");
+        let old_entry = vec![0u8; params.entry_size];
+        let new_entry = vec![9u8; params.entry_size];
+        let update = crate::messages::Update {
+            index,
+            old_entry,
+            new_entry: new_entry.clone(),
+        };
+        server.apply_update(&update).unwrap();
+        client.apply_update(&update).unwrap();
+
+        let got = client.query(&server, index).unwrap();
+        assert_eq!(got, new_entry);
     }
 
 }
