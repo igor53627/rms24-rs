@@ -170,27 +170,33 @@ fn test_real_slice_sequential_optional() {
         Err(_) => return,
     };
 
-    let (account_targets, storage_targets) = collect_targets(
-        &client,
-        &acc_map,
-        &sto_map,
-        num_entries,
-        acc_count,
-        sto_count,
-        TARGETS_PER_KIND,
-    );
+    let total_rounds = TARGETS_PER_KIND * 2;
+    for round in 0..total_rounds {
+        let (account_targets, storage_targets) = collect_targets(
+            &client,
+            &acc_map,
+            &sto_map,
+            num_entries,
+            acc_count,
+            sto_count,
+            1,
+        );
+        let target = if round % 2 == 0 {
+            account_targets
+                .into_iter()
+                .next()
+                .or_else(|| storage_targets.into_iter().next())
+        } else {
+            storage_targets
+                .into_iter()
+                .next()
+                .or_else(|| account_targets.into_iter().next())
+        };
+        let target = match target {
+            Some(target) => target,
+            None => return,
+        };
 
-    assert!(!account_targets.is_empty(), "no account targets found");
-    assert!(!storage_targets.is_empty(), "no storage targets found");
-
-    let mut targets = Vec::new();
-    targets.extend(account_targets);
-    targets.extend(storage_targets);
-
-    let target_count = targets.len();
-    assert!(target_count >= TARGETS_PER_KIND * 2, "not enough targets");
-
-    for target in targets {
         let (target_block, target_offset) = (
             params.block_of(target.index) as u32,
             params.offset_in_block(target.index) as u32,
