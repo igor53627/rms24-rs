@@ -11,6 +11,11 @@ pub mod schema40;
 pub mod messages;
 pub mod server;
 pub mod updates;
+pub mod online;
+pub mod online_framing;
+pub mod online_transport;
+pub mod online_server;
+pub mod online_client;
 
 #[cfg(feature = "cuda")]
 pub mod gpu;

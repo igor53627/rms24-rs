@@ -10,6 +10,15 @@ RMS24-RS is a Rust implementation of the RMS24 single-server PIR protocol with o
 - `src/prf.rs`: ChaCha12-based PRF for subset selection and offsets.
 - `src/hints.rs`: Hint state, subset representation, and utilities.
 - `src/client.rs`: Offline hint generation and subset precomputation.
+- `src/online.rs`: Online protocol types (config, queries, replies, errors).
+- `src/online_framing.rs`: Length-prefixed framing helpers for byte streams.
+- `src/online_transport.rs`: Transport abstraction and framed I/O implementation.
+- `src/online_server.rs`: Sync server core for RMS24/KeywordPIR routing.
+- `src/online_client.rs`: Sync client helpers for building/parsing online queries.
+
+## Online Protocol
+
+The online protocol exposes a single logical entrypoint with a mode switch (RMS24 or KeywordPIR). Clients send a `RunConfig` frame, then one or more `Query` frames over a raw TCP connection using length-prefixed `bincode` encoding. The server core maps RMS24 requests to `messages::Query` and uses `Server::answer`, while KeywordPIR requests are handled by an injected handler.
 
 ## Binaries
 
