@@ -106,7 +106,7 @@ fn test_real_slice_optional() {
         let start = target.index as usize * entry_size;
         let expected = db[start..start + entry_size].to_vec();
         assert_eq!(got, expected);
-        let tag = Tag::from_key(&target.key);
+        let tag = tag_for_key(&target.key);
         let tag_end = target.tag_offset + tag.0.len();
         assert_eq!(&got[target.tag_offset..tag_end], &tag.0);
     }
@@ -223,7 +223,7 @@ fn test_real_slice_sequential_optional() {
                 fresh_matches
             );
         }
-        let tag = Tag::from_key(&target.key);
+        let tag = tag_for_key(&target.key);
         let tag_end = target.tag_offset + tag.0.len();
         assert_eq!(&got[target.tag_offset..tag_end], &tag.0);
     }
@@ -340,6 +340,24 @@ fn count_candidate_hints(client: &OnlineClient, block: u32, offset: u32) -> usiz
         }
     }
     count
+}
+
+fn tag_for_key(key: &[u8]) -> Tag {
+    match key.len() {
+        ACCOUNT_KEY_SIZE => {
+            let mut address = [0u8; ACCOUNT_KEY_SIZE];
+            address.copy_from_slice(key);
+            Tag::from_address(&address)
+        }
+        STORAGE_KEY_SIZE => {
+            let mut address = [0u8; ACCOUNT_KEY_SIZE];
+            let mut slot = [0u8; 32];
+            address.copy_from_slice(&key[..ACCOUNT_KEY_SIZE]);
+            slot.copy_from_slice(&key[ACCOUNT_KEY_SIZE..]);
+            Tag::from_address_slot(&address, &slot)
+        }
+        _ => panic!("unexpected key size {}", key.len()),
+    }
 }
 
 fn collect_targets(
