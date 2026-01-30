@@ -156,6 +156,86 @@ impl StorageEntry40 {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct CodeStore {
+    hashes: Vec<[u8; 32]>,
+    hash_to_id: std::collections::HashMap<[u8; 32], CodeId>,
+}
+
+impl CodeStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get_or_insert(&mut self, hash: Option<&[u8; 32]>) -> CodeId {
+        let hash = match hash {
+            Some(h) if *h != [0u8; 32] => h,
+            _ => return CodeId(CODE_ID_NONE),
+        };
+        if let Some(&id) = self.hash_to_id.get(hash) {
+            return id;
+        }
+        let next_len = self.hashes.len() + 1;
+        if next_len >= u32::MAX as usize {
+            panic!("CodeStore exhausted: reached maximum of 4B unique bytecodes");
+        }
+        let id = CodeId(next_len as u32);
+        self.hashes.push(*hash);
+        self.hash_to_id.insert(*hash, id);
+        id
+    }
+
+    pub fn get(&self, id: CodeId) -> Option<&[u8; 32]> {
+        if id.is_eoa() {
+            return None;
+        }
+        self.hashes.get((id.0 - 1) as usize)
+    }
+
+    pub fn len(&self) -> usize {
+        self.hashes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty()
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(4 + self.hashes.len() * 32);
+        bytes.extend_from_slice(&(self.hashes.len() as u32).to_le_bytes());
+        for hash in &self.hashes {
+            bytes.extend_from_slice(hash);
+        }
+        bytes
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() < 4 {
+            return Err("Code store too short".to_string());
+        }
+        let count = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+        let expected = 4 + count * 32;
+        if bytes.len() != expected {
+            return Err(format!(
+                "Code store size mismatch: expected {}, got {}",
+                expected,
+                bytes.len()
+            ));
+        }
+        let mut store = Self::new();
+        for i in 0..count {
+            let offset = 4 + i * 32;
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&bytes[offset..offset + 32]);
+            store.hashes.push(hash);
+            store
+                .hash_to_id
+                .insert(hash, CodeId((i + 1) as u32));
+        }
+        Ok(store)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,5 +327,39 @@ mod tests {
         let bytes = entry.to_bytes();
         assert_eq!(&bytes[0..32], &[0u8; 32]);
         assert_eq!(&bytes[32..40], &[0u8; 8]);
+    }
+
+    #[test]
+    fn test_code_store_basic() {
+        let mut store = CodeStore::new();
+        assert_eq!(store.get_or_insert(None), CodeId(0));
+        assert_eq!(store.get_or_insert(Some(&[0u8; 32])), CodeId(0));
+
+        let hash1 = [0x11u8; 32];
+        let id1 = store.get_or_insert(Some(&hash1));
+        assert_eq!(id1, CodeId(1));
+        assert_eq!(store.get(CodeId(1)), Some(&hash1));
+
+        let hash2 = [0x22u8; 32];
+        let id2 = store.get_or_insert(Some(&hash2));
+        assert_eq!(id2, CodeId(2));
+        assert_eq!(store.get(CodeId(2)), Some(&hash2));
+
+        assert_eq!(store.get(CodeId(0)), None);
+        assert_eq!(store.get(CodeId(999)), None);
+    }
+
+    #[test]
+    fn test_code_store_serialization() {
+        let mut store = CodeStore::new();
+        store.get_or_insert(Some(&[0x11u8; 32]));
+        store.get_or_insert(Some(&[0x22u8; 32]));
+
+        let bytes = store.to_bytes();
+        let recovered = CodeStore::from_bytes(&bytes).unwrap();
+
+        assert_eq!(store.len(), recovered.len());
+        assert_eq!(store.get(CodeId(1)), recovered.get(CodeId(1)));
+        assert_eq!(store.get(CodeId(2)), recovered.get(CodeId(2)));
     }
 }
