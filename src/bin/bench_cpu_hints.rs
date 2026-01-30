@@ -1,7 +1,7 @@
 use clap::Parser;
 use memmap2::MmapOptions;
 use rayon::prelude::*;
-use rms24::{client::Client, params::Params, hints::{xor_bytes_inplace, find_median_cutoff}, prf::Prf};
+use rms24::{params::Params, hints::{xor_bytes_inplace, find_median_cutoff}, prf::Prf};
 use std::fs::File;
 use std::time::Instant;
 use std::sync::atomic::{AtomicUsize, Ordering};
