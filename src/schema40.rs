@@ -63,29 +63,63 @@ impl CodeId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct AccountEntry40 {
-    pub value: [u8; 32],
+    pub balance: [u8; BALANCE_SIZE],
+    pub nonce: u32,
+    pub code_id: CodeId,
     pub tag: Tag,
+    pub _padding: [u8; ACCOUNT_PADDING_SIZE],
 }
 
 impl AccountEntry40 {
-    pub fn encode(&self) -> [u8; 40] {
-        let mut out = [0u8; 40];
-        out[..32].copy_from_slice(&self.value);
-        out[32..].copy_from_slice(&self.tag.0);
-        out
+    pub fn new(balance_256: &[u8; 32], nonce: u64, code_id: CodeId, address: &[u8; 20]) -> Self {
+        let mut balance = [0u8; BALANCE_SIZE];
+        balance.copy_from_slice(&balance_256[..BALANCE_SIZE]);
+        let nonce_u32 = if nonce > u32::MAX as u64 {
+            u32::MAX
+        } else {
+            nonce as u32
+        };
+        Self {
+            balance,
+            nonce: nonce_u32,
+            code_id,
+            tag: Tag::from_address(address),
+            _padding: [0u8; ACCOUNT_PADDING_SIZE],
+        }
     }
 
-    pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 40 {
-            return None;
+    pub fn to_bytes(&self) -> [u8; ENTRY_SIZE] {
+        let mut bytes = [0u8; ENTRY_SIZE];
+        bytes[0..16].copy_from_slice(&self.balance);
+        bytes[16..20].copy_from_slice(&self.nonce.to_le_bytes());
+        bytes[20..24].copy_from_slice(&self.code_id.to_le_bytes());
+        bytes[24..32].copy_from_slice(self.tag.as_bytes());
+        bytes
+    }
+
+    pub fn from_bytes(bytes: &[u8; ENTRY_SIZE]) -> Self {
+        let mut balance = [0u8; BALANCE_SIZE];
+        balance.copy_from_slice(&bytes[0..16]);
+        let nonce = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+        let mut code_id_bytes = [0u8; CODE_ID_SIZE];
+        code_id_bytes.copy_from_slice(&bytes[20..24]);
+        let code_id = CodeId::from_le_bytes(code_id_bytes);
+        let mut tag_bytes = [0u8; TAG_SIZE];
+        tag_bytes.copy_from_slice(&bytes[24..32]);
+        let tag = Tag(tag_bytes);
+        Self {
+            balance,
+            nonce,
+            code_id,
+            tag,
+            _padding: [0u8; ACCOUNT_PADDING_SIZE],
         }
-        let mut value = [0u8; 32];
-        value.copy_from_slice(&bytes[..32]);
-        let mut tag = [0u8; 8];
-        tag.copy_from_slice(&bytes[32..]);
-        Some(Self { value, tag: Tag(tag) })
+    }
+
+    pub fn nonce_u64(&self) -> u64 {
+        self.nonce as u64
     }
 }
 
@@ -155,15 +189,35 @@ mod tests {
     }
 
     #[test]
-    fn test_account_entry_encode_decode() {
-        let value = [0xAAu8; 32];
-        let tag = Tag([0xBBu8; 8]);
-        let entry = AccountEntry40 { value, tag };
-        let bytes = entry.encode();
-        assert_eq!(bytes.len(), 40);
-        let decoded = AccountEntry40::decode(&bytes).unwrap();
-        assert_eq!(decoded.value, value);
-        assert_eq!(decoded.tag.0, tag.0);
+    fn test_account_entry_roundtrip() {
+        let balance = [0x42u8; 32];
+        let nonce = 12345u64;
+        let address = [0xABu8; 20];
+        let code_id = CodeId::new(999);
+
+        let entry = AccountEntry40::new(&balance, nonce, code_id, &address);
+        let bytes = entry.to_bytes();
+        let recovered = AccountEntry40::from_bytes(&bytes);
+
+        assert_eq!(entry.balance, recovered.balance);
+        assert_eq!(entry.nonce, recovered.nonce);
+        assert_eq!(entry.code_id, recovered.code_id);
+        assert_eq!(entry.tag, recovered.tag);
+    }
+
+    #[test]
+    fn test_balance_truncation() {
+        let balance_large = [0xFFu8; 32];
+        let entry = AccountEntry40::new(&balance_large, 0, CodeId(0), &[0u8; 20]);
+        assert_eq!(&entry.balance[..], &[0xFFu8; 16]);
+    }
+
+    #[test]
+    fn test_nonce_truncation() {
+        let address = [0u8; 20];
+        let balance = [0u8; 32];
+        let entry = AccountEntry40::new(&balance, u64::MAX, CodeId(0), &address);
+        assert_eq!(entry.nonce, u32::MAX);
     }
 
     #[test]
