@@ -10,6 +10,8 @@ const ACCOUNT_MAP_RECORD_SIZE: usize = 24;
 const STORAGE_MAP_RECORD_SIZE: usize = 56;
 const ACCOUNT_KEY_SIZE: usize = 20;
 const STORAGE_KEY_SIZE: usize = 52;
+// Plinko v3 account entry layout: balance(16) + nonce(4) + code_id(4) + tag(8) + pad(8).
+// Plinko v3 storage entry layout: value(32) + tag(8).
 const ACCOUNT_TAG_OFFSET: usize = 24;
 const STORAGE_TAG_OFFSET: usize = 32;
 const TARGETS_PER_KIND: usize = 3;

@@ -375,26 +375,22 @@ impl OnlineClient {
             let select = self.prf.select(prf_id, block);
             let picked_offset =
                 (self.prf.offset(prf_id, block) % self.params.block_size) as u32;
-            if picked_offset != offset {
-                if hint_id < num_reg {
-                    let extra_block = self.hints.extra_blocks[hint_id];
-                    let extra_offset = self.hints.extra_offsets[hint_id];
-                    if extra_block == block && extra_offset == offset {
-                        xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.old_entry);
-                        xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.new_entry);
-                    }
-                }
-                continue;
-            }
+            let matches_selected = picked_offset == offset;
 
             if hint_id < num_reg {
                 let flipped = self.hints.flips[hint_id];
                 let is_selected = if flipped { select >= cutoff } else { select < cutoff };
-                if is_selected {
+                let extra_block = self.hints.extra_blocks[hint_id];
+                let extra_offset = self.hints.extra_offsets[hint_id];
+                let matches_extra = extra_block == block && extra_offset == offset;
+                if (matches_selected && is_selected) || matches_extra {
                     xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.old_entry);
                     xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.new_entry);
                 }
             } else {
+                if !matches_selected {
+                    continue;
+                }
                 let backup_idx = hint_id - num_reg;
                 if select < cutoff {
                     xor_bytes_inplace(&mut self.hints.parities[hint_id], &update.old_entry);
@@ -786,4 +782,54 @@ mod tests {
         assert_eq!(got, new_entry);
     }
 
+    #[test]
+    fn test_apply_update_handles_extra_entry_collision() {
+        let params = Params::new(16, 4, 1);
+        let prf = Prf::new([7u8; 32]);
+        let mut client = OnlineClient::new(params.clone(), prf, 0);
+        let total = (params.num_reg_hints + params.num_backup_hints) as usize;
+
+        client.hints.cutoffs = vec![0; total];
+        client.hints.parities = vec![vec![0u8; params.entry_size]; total];
+        client.hints.flips = vec![false; total];
+        client.hints.extra_blocks = vec![u32::MAX; total];
+        client.hints.extra_offsets = vec![0; total];
+
+        let cutoff = u32::MAX / 2;
+        client.hints.cutoffs[0] = cutoff;
+
+        let prf_id = client.hint_prf_ids[0];
+        let num_blocks = params.num_blocks as u32;
+        let block_size = params.block_size;
+        let mut chosen = None;
+        for block in 0..num_blocks {
+            let select = client.prf.select(prf_id, block);
+            if select >= cutoff {
+                let offset = (client.prf.offset(prf_id, block) % block_size) as u32;
+                let index = (block as u64) * block_size + (offset as u64);
+                if index < params.num_entries {
+                    chosen = Some((block, offset, index));
+                    break;
+                }
+            }
+        }
+        let (block, offset, index) = chosen.expect("expected a high-subset block");
+        client.hints.extra_blocks[0] = block;
+        client.hints.extra_offsets[0] = offset;
+
+        let old_entry = vec![1u8; params.entry_size];
+        let new_entry = vec![9u8; params.entry_size];
+        let update = crate::messages::Update {
+            index,
+            old_entry: old_entry.clone(),
+            new_entry: new_entry.clone(),
+        };
+
+        client.apply_update(&update).unwrap();
+
+        let mut expected = vec![0u8; params.entry_size];
+        xor_bytes_inplace(&mut expected, &old_entry);
+        xor_bytes_inplace(&mut expected, &new_entry);
+        assert_eq!(client.hints.parities[0], expected);
+    }
 }
