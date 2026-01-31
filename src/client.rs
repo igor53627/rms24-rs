@@ -240,6 +240,24 @@ impl OnlineClient {
         id
     }
 
+    fn hint_covers(&self, hint_id: usize, target_block: u32, target_offset: u32) -> bool {
+        let cutoff = self.hints.cutoffs[hint_id];
+        if cutoff == 0 {
+            return false;
+        }
+        let prf_id = self.hint_prf_ids[hint_id];
+        let select = self.prf.select(prf_id, target_block);
+        let offset = (self.prf.offset(prf_id, target_block) % self.params.block_size) as u32;
+        let flipped = self.hints.flips[hint_id];
+        let is_selected = if flipped { select >= cutoff } else { select < cutoff };
+        if is_selected && offset == target_offset {
+            return true;
+        }
+        let extra_block = self.hints.extra_blocks[hint_id];
+        let extra_offset = self.hints.extra_offsets[hint_id];
+        extra_block == target_block && extra_offset == target_offset
+    }
+
     pub fn build_network_queries(
         &mut self,
         index: u64,
@@ -253,12 +271,8 @@ impl OnlineClient {
 
         let mut candidates = Vec::new();
         for &hint_id in &self.available_hints {
-            let subset = self.build_subset_for_hint(hint_id);
-            if subset
-                .iter()
-                .any(|(block, offset)| *block == target_block && *offset == target_offset)
-            {
-                candidates.push((hint_id, subset));
+            if self.hint_covers(hint_id, target_block, target_offset) {
+                candidates.push(hint_id);
             }
         }
 
@@ -268,7 +282,8 @@ impl OnlineClient {
 
         let id = self.next_query_id();
         let candidate_idx = self.rng.gen_range(0..candidates.len());
-        let (real_hint, mut real_subset) = candidates.swap_remove(candidate_idx);
+        let real_hint = candidates.swap_remove(candidate_idx);
+        let mut real_subset = self.build_subset_for_hint(real_hint);
         if let Some(pos) = real_subset
             .iter()
             .position(|(block, offset)| *block == target_block && *offset == target_offset)
@@ -781,6 +796,26 @@ mod tests {
 
         let parity = vec![0u8; params.entry_size];
         let _ = client.consume_network_reply(3, real_hint, parity).unwrap();
+    }
+
+    #[test]
+    fn test_hint_covers_matches_subset() {
+        let params = Params::new(64, 4, 4);
+        let prf = Prf::random();
+        let mut client = OnlineClient::new(params.clone(), prf, 1);
+        let db = vec![7u8; (params.num_entries as usize) * params.entry_size];
+        client.generate_hints(&db).unwrap();
+
+        let mut found = None;
+        for hint_id in 0..client.available_hints.len() {
+            let subset = client.build_subset_for_hint(hint_id);
+            if let Some((block, offset)) = subset.first().copied() {
+                found = Some((hint_id, block, offset));
+                break;
+            }
+        }
+        let (hint_id, block, offset) = found.expect("expected non-empty subset");
+        assert!(client.hint_covers(hint_id, block, offset));
     }
 
     #[test]
