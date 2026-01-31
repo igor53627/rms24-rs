@@ -11,6 +11,7 @@ use rand_chacha::ChaCha20Rng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::time::Instant;
 
 pub struct Client {
     pub params: Params,
@@ -110,12 +111,17 @@ impl Client {
         let num_reg = p.num_reg_hints as usize;
         let num_blocks = p.num_blocks as u32;
         let block_size = p.block_size as u64;
+        let total_hints = num_total as u64;
+        let total_blocks = num_blocks as u64;
 
         // Reset hint state
         self.hints = HintState::new(num_reg, p.num_backup_hints as usize, p.entry_size);
 
         // Phase 1: Build skeleton (cutoffs and extras)
         let mut rng = rand::thread_rng();
+        let phase1_start = Instant::now();
+        let log_every_hint = std::cmp::max(1, (total_hints + 99) / 100);
+        let mut next_hint_log = log_every_hint;
         for hint_idx in 0..num_total {
             let mut select_values = self.prf.select_vector(hint_idx as u32, num_blocks);
             self.hints.cutoffs[hint_idx] = find_median_cutoff(&mut select_values);
@@ -131,9 +137,31 @@ impl Client {
                     }
                 }
             }
+
+            let done = (hint_idx + 1) as u64;
+            if done >= next_hint_log || done == total_hints {
+                let elapsed = phase1_start.elapsed().as_secs_f64();
+                let rate = done as f64 / elapsed;
+                let eta = if rate > 0.0 {
+                    (total_hints.saturating_sub(done)) as f64 / rate
+                } else {
+                    0.0
+                };
+                let pct = done as f64 * 100.0 / total_hints.max(1) as f64;
+                println!(
+                    "progress phase=phase1 pct={:.1} elapsed_s={:.0} eta_s={:.0}",
+                    pct, elapsed, eta
+                );
+                if done >= next_hint_log {
+                    next_hint_log += log_every_hint;
+                }
+            }
         }
 
         // Phase 2: Stream database and accumulate parities
+        let phase2_start = Instant::now();
+        let log_every_block = std::cmp::max(1, (total_blocks + 99) / 100);
+        let mut next_block_log = log_every_block;
         for block in 0..num_blocks {
             let block_start = block as u64 * block_size;
 
@@ -173,6 +201,25 @@ impl Client {
                     } else {
                         xor_bytes_inplace(&mut self.hints.backup_parities_high[backup_idx], entry);
                     }
+                }
+            }
+
+            let done = (block + 1) as u64;
+            if done >= next_block_log || done == total_blocks {
+                let elapsed = phase2_start.elapsed().as_secs_f64();
+                let rate = done as f64 / elapsed;
+                let eta = if rate > 0.0 {
+                    (total_blocks.saturating_sub(done)) as f64 / rate
+                } else {
+                    0.0
+                };
+                let pct = done as f64 * 100.0 / total_blocks.max(1) as f64;
+                println!(
+                    "progress phase=phase2 pct={:.1} elapsed_s={:.0} eta_s={:.0}",
+                    pct, elapsed, eta
+                );
+                if done >= next_block_log {
+                    next_block_log += log_every_block;
                 }
             }
         }

@@ -11,6 +11,8 @@ ENTRY_SIZE=${ENTRY_SIZE:-40}
 LAMBDA=${LAMBDA:-80}
 SEED=${SEED:-42}
 RMS24_COVERAGE_INDEX=${RMS24_COVERAGE_INDEX:-}
+CACHE_DIR=${CACHE_DIR:-"$DATA_ROOT/cache"}
+RMS24_STATE_PATH=${RMS24_STATE_PATH:-}
 
 MODES_DEFAULT=("rms24")
 THREADS_DEFAULT=(1 4)
@@ -50,6 +52,7 @@ write_env() {
     echo "seed=$SEED"
     echo "data_root=$DATA_ROOT"
     echo "coverage_index=$RMS24_COVERAGE_INDEX"
+    echo "state_path=$STATE_PATH"
     echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } | tee "$ENV_FILE"
 }
@@ -93,6 +96,15 @@ case "$DATASET" in
     exit 1
     ;;
 esac
+
+mkdir -p "$CACHE_DIR"
+STATE_PATH=${RMS24_STATE_PATH:-"$CACHE_DIR/hints_${DATASET}_entry${ENTRY_SIZE}_lambda${LAMBDA}_seed${SEED}.bin"}
+STATE_STATUS="unknown"
+if [[ -f "$STATE_PATH" ]]; then
+  STATE_STATUS="hit"
+else
+  STATE_STATUS="miss"
+fi
 
 write_env
 
@@ -156,6 +168,7 @@ for mode in "${MODES[@]}"; do
         --threads "$threads" \
         --seed "$SEED" \
         --mode "$mode" \
+        --state "$STATE_PATH" \
         "${COVERAGE_FLAG[@]}" \
         > "$run_log" 2>&1
       end_run=$(now_ms)
@@ -175,6 +188,9 @@ dataset: $DATASET
 server: $SERVER_ADDR
 entry_size: $ENTRY_SIZE
 lambda: $LAMBDA
+
+state_cache_path: $STATE_PATH
+state_cache_status: $STATE_STATUS
 
 Artifacts:
 - $SUMMARY
