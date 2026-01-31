@@ -306,6 +306,71 @@ impl OnlineClient {
         Ok((real_query, dummy_query, real_hint))
     }
 
+    pub fn build_coverage_index(&self) -> Vec<Vec<u32>> {
+        let num_entries = self.params.num_entries as usize;
+        let num_reg = self.params.num_reg_hints as usize;
+        let mut coverage = vec![Vec::new(); num_entries];
+        let block_size = self.params.block_size;
+
+        for hint_id in 0..num_reg {
+            let subset = self.build_subset_for_hint(hint_id);
+            for (block, offset) in subset {
+                let idx = (block as u64) * block_size + (offset as u64);
+                if idx < self.params.num_entries {
+                    coverage[idx as usize].push(hint_id as u32);
+                }
+            }
+        }
+        coverage
+    }
+
+    pub fn build_network_queries_with_coverage(
+        &mut self,
+        index: u64,
+        coverage: &[Vec<u32>],
+    ) -> Result<(crate::messages::Query, crate::messages::Query, usize), ClientError> {
+        if index >= self.params.num_entries {
+            return Err(ClientError::InvalidIndex);
+        }
+        let target_block = self.params.block_of(index) as u32;
+        let target_offset = self.params.offset_in_block(index) as u32;
+
+        let mut candidates: Vec<usize> = coverage[index as usize]
+            .iter()
+            .copied()
+            .map(|id| id as usize)
+            .collect();
+
+        if candidates.is_empty() {
+            return self.build_network_queries(index);
+        }
+
+        let candidate_idx = self.rng.gen_range(0..candidates.len());
+        let real_hint = candidates.swap_remove(candidate_idx);
+        let mut real_subset = self.build_subset_for_hint(real_hint);
+        if let Some(pos) = real_subset
+            .iter()
+            .position(|(block, offset)| *block == target_block && *offset == target_offset)
+        {
+            real_subset.swap_remove(pos);
+        }
+
+        let dummy_hint = self.available_hints[self.rng.gen_range(0..self.available_hints.len())];
+        let dummy_subset = self.build_subset_for_hint(dummy_hint);
+
+        let id = self.next_query_id();
+        let real_query = crate::messages::Query {
+            id,
+            subset: real_subset,
+        };
+        let dummy_query = crate::messages::Query {
+            id,
+            subset: dummy_subset,
+        };
+
+        Ok((real_query, dummy_query, real_hint))
+    }
+
     pub fn consume_network_reply(
         &mut self,
         index: u64,
@@ -816,6 +881,43 @@ mod tests {
         }
         let (hint_id, block, offset) = found.expect("expected non-empty subset");
         assert!(client.hint_covers(hint_id, block, offset));
+    }
+
+    #[test]
+    fn test_build_coverage_index_contains_hint() {
+        let params = Params::new(64, 4, 4);
+        let prf = Prf::random();
+        let mut client = OnlineClient::new(params.clone(), prf, 1);
+        let db = vec![7u8; (params.num_entries as usize) * params.entry_size];
+        client.generate_hints(&db).unwrap();
+
+        let coverage = client.build_coverage_index();
+        let num_reg = params.num_reg_hints as usize;
+
+        for hint_id in 0..num_reg {
+            let subset = client.build_subset_for_hint(hint_id);
+            for (block, offset) in subset {
+                let idx = (block as u64) * params.block_size + offset as u64;
+                assert!(coverage[idx as usize].contains(&(hint_id as u32)));
+            }
+        }
+    }
+
+    #[test]
+    fn test_network_queries_with_coverage_selects_hint() {
+        let params = Params::new(64, 4, 4);
+        let prf = Prf::random();
+        let mut client = OnlineClient::new(params.clone(), prf, 1);
+        let db = vec![7u8; (params.num_entries as usize) * params.entry_size];
+        client.generate_hints(&db).unwrap();
+        let coverage = client.build_coverage_index();
+
+        let index = 3u64;
+        let (real_query, _dummy_query, real_hint) =
+            client.build_network_queries_with_coverage(index, &coverage).unwrap();
+
+        assert!(coverage[index as usize].contains(&(real_hint as u32)));
+        assert_eq!(real_query.id, real_query.id);
     }
 
     #[test]
