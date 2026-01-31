@@ -11,6 +11,7 @@ pub mod schema40;
 pub mod messages;
 pub mod server;
 pub mod updates;
+pub mod bench_proto;
 
 #[cfg(feature = "cuda")]
 pub mod gpu;
