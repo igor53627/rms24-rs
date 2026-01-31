@@ -7,10 +7,11 @@ use crate::params::Params;
 use crate::prf::Prf;
 use bincode::Options;
 use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha20Rng;
+use rand_chacha::{ChaCha20Rng, ChaCha8Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 pub struct Client {
@@ -111,118 +112,196 @@ impl Client {
         let num_reg = p.num_reg_hints as usize;
         let num_blocks = p.num_blocks as u32;
         let block_size = p.block_size as u64;
+        let entry_size = p.entry_size;
         let total_hints = num_total as u64;
-        let total_blocks = num_blocks as u64;
 
         // Reset hint state
-        self.hints = HintState::new(num_reg, p.num_backup_hints as usize, p.entry_size);
+        self.hints = HintState::new(num_reg, p.num_backup_hints as usize, entry_size);
 
-        // Phase 1: Build skeleton (cutoffs and extras)
-        let mut rng = rand::thread_rng();
+        struct Phase1Result {
+            cutoff: u32,
+            extra_block: u32,
+            extra_offset: u32,
+        }
+
         let phase1_start = Instant::now();
         let log_every_hint = std::cmp::max(1, (total_hints + 99) / 100);
-        let mut next_hint_log = log_every_hint;
-        for hint_idx in 0..num_total {
-            let mut select_values = self.prf.select_vector(hint_idx as u32, num_blocks);
-            self.hints.cutoffs[hint_idx] = find_median_cutoff(&mut select_values);
+        let hints_done = AtomicUsize::new(0);
 
-            if hint_idx < num_reg && self.hints.cutoffs[hint_idx] != 0 {
-                // Pick random block from high subset
-                loop {
-                    let block: u32 = rng.gen_range(0..num_blocks);
-                    if self.prf.select(hint_idx as u32, block) >= self.hints.cutoffs[hint_idx] {
-                        self.hints.extra_blocks[hint_idx] = block;
-                        self.hints.extra_offsets[hint_idx] = rng.gen_range(0..block_size as u32);
-                        break;
-                    }
-                }
-            }
+        let phase1_results: Vec<Phase1Result> = (0..num_total)
+            .into_par_iter()
+            .map_init(
+                || (
+                    Vec::with_capacity(num_blocks as usize),
+                    Vec::with_capacity(num_blocks as usize),
+                    Vec::with_capacity(num_blocks as usize * 64),
+                    Vec::with_capacity(num_blocks as usize * 64),
+                ),
+                |(select_values, offset_values, select_bytes, offset_bytes), hint_idx| {
+                    self.prf.fill_select_and_offset_reused(
+                        hint_idx as u32,
+                        num_blocks,
+                        select_values,
+                        offset_values,
+                        select_bytes,
+                        offset_bytes,
+                    );
+                    let cutoff = find_median_cutoff(select_values);
+                    let mut extra_block = 0u32;
+                    let mut extra_offset = 0u32;
 
-            let done = (hint_idx + 1) as u64;
-            if done >= next_hint_log || done == total_hints {
-                let elapsed = phase1_start.elapsed().as_secs_f64();
-                let rate = done as f64 / elapsed;
-                let eta = if rate > 0.0 {
-                    (total_hints.saturating_sub(done)) as f64 / rate
-                } else {
-                    0.0
-                };
-                let pct = done as f64 * 100.0 / total_hints.max(1) as f64;
-                println!(
-                    "progress phase=phase1 pct={:.1} elapsed_s={:.0} eta_s={:.0}",
-                    pct, elapsed, eta
-                );
-                if done >= next_hint_log {
-                    next_hint_log += log_every_hint;
-                }
-            }
-        }
-
-        // Phase 2: Stream database and accumulate parities
-        let phase2_start = Instant::now();
-        let log_every_block = std::cmp::max(1, (total_blocks + 99) / 100);
-        let mut next_block_log = log_every_block;
-        for block in 0..num_blocks {
-            let block_start = block as u64 * block_size;
-
-            for hint_idx in 0..num_total {
-                let cutoff = self.hints.cutoffs[hint_idx];
-                if cutoff == 0 {
-                    continue;
-                }
-
-                let select_value = self.prf.select(hint_idx as u32, block);
-                let picked_offset = (self.prf.offset(hint_idx as u32, block) % block_size) as u64;
-                let entry_idx = block_start + picked_offset;
-
-                if entry_idx >= p.num_entries {
-                    continue;
-                }
-
-                let entry_start = (entry_idx as usize) * p.entry_size;
-                let entry = &db[entry_start..entry_start + p.entry_size];
-                let is_selected = select_value < cutoff;
-
-                if hint_idx < num_reg {
-                    if is_selected {
-                        xor_bytes_inplace(&mut self.hints.parities[hint_idx], entry);
-                    } else if block == self.hints.extra_blocks[hint_idx] {
-                        let extra_idx = block_start + self.hints.extra_offsets[hint_idx] as u64;
-                        if extra_idx < p.num_entries {
-                            let extra_start = (extra_idx as usize) * p.entry_size;
-                            let extra_entry = &db[extra_start..extra_start + p.entry_size];
-                            xor_bytes_inplace(&mut self.hints.parities[hint_idx], extra_entry);
+                    if hint_idx < num_reg && cutoff != 0 {
+                        let mut rng = ChaCha8Rng::seed_from_u64(hint_idx as u64);
+                        let mut high_count = 0u64;
+                        for (block, &select_val) in select_values.iter().enumerate() {
+                            if select_val >= cutoff {
+                                high_count += 1;
+                                if rng.gen_range(0..high_count) == 0 {
+                                    extra_block = block as u32;
+                                }
+                            }
+                        }
+                        if high_count > 0 {
+                            extra_offset = rng.gen_range(0..block_size as u32);
                         }
                     }
-                } else {
-                    let backup_idx = hint_idx - num_reg;
-                    if is_selected {
-                        xor_bytes_inplace(&mut self.hints.parities[hint_idx], entry);
-                    } else {
-                        xor_bytes_inplace(&mut self.hints.backup_parities_high[backup_idx], entry);
-                    }
-                }
-            }
 
-            let done = (block + 1) as u64;
-            if done >= next_block_log || done == total_blocks {
-                let elapsed = phase2_start.elapsed().as_secs_f64();
-                let rate = done as f64 / elapsed;
-                let eta = if rate > 0.0 {
-                    (total_blocks.saturating_sub(done)) as f64 / rate
-                } else {
-                    0.0
-                };
-                let pct = done as f64 * 100.0 / total_blocks.max(1) as f64;
-                println!(
-                    "progress phase=phase2 pct={:.1} elapsed_s={:.0} eta_s={:.0}",
-                    pct, elapsed, eta
-                );
-                if done >= next_block_log {
-                    next_block_log += log_every_block;
-                }
+                    let done = hints_done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if done as u64 % log_every_hint == 0 || done as u64 == total_hints {
+                        let elapsed = phase1_start.elapsed().as_secs_f64();
+                        let rate = done as f64 / elapsed.max(1e-9);
+                        let eta = if rate > 0.0 {
+                            (total_hints.saturating_sub(done as u64)) as f64 / rate
+                        } else {
+                            0.0
+                        };
+                        let pct = done as f64 * 100.0 / total_hints.max(1) as f64;
+                        println!(
+                            "progress phase=phase1 pct={:.1} elapsed_s={:.0} eta_s={:.0}",
+                            pct, elapsed, eta
+                        );
+                    }
+
+                    Phase1Result {
+                        cutoff,
+                        extra_block,
+                        extra_offset,
+                    }
+                },
+            )
+            .collect();
+
+        for (idx, res) in phase1_results.into_iter().enumerate() {
+            self.hints.cutoffs[idx] = res.cutoff;
+            self.hints.extra_blocks[idx] = res.extra_block;
+            self.hints.extra_offsets[idx] = res.extra_offset;
+        }
+
+        struct ParityResult {
+            parity: Vec<u8>,
+            backup_high: Option<Vec<u8>>,
+        }
+
+        let phase2_start = Instant::now();
+        let phase2_done = AtomicUsize::new(0);
+
+        let parity_results: Vec<ParityResult> = (0..num_total)
+            .into_par_iter()
+            .map_init(
+                || (
+                    Vec::with_capacity(num_blocks as usize),
+                    Vec::with_capacity(num_blocks as usize),
+                    Vec::with_capacity(num_blocks as usize * 64),
+                    Vec::with_capacity(num_blocks as usize * 64),
+                ),
+                |(select_values, offset_values, select_bytes, offset_bytes), hint_idx| {
+                    let cutoff = self.hints.cutoffs[hint_idx];
+                    let extra_block = self.hints.extra_blocks[hint_idx];
+                    let extra_offset = self.hints.extra_offsets[hint_idx];
+
+                    let mut parity = vec![0u8; entry_size];
+                    let mut backup_high = if hint_idx < num_reg {
+                        None
+                    } else {
+                        Some(vec![0u8; entry_size])
+                    };
+
+                    if cutoff != 0 {
+                        self.prf.fill_select_and_offset_reused(
+                            hint_idx as u32,
+                            num_blocks,
+                            select_values,
+                            offset_values,
+                            select_bytes,
+                            offset_bytes,
+                        );
+
+                        for block in 0..num_blocks {
+                            let select_val = select_values[block as usize];
+                            let offset_val = offset_values[block as usize] % block_size;
+                            let entry_idx = (block as u64 * block_size) + offset_val;
+                            if entry_idx >= p.num_entries {
+                                continue;
+                            }
+
+                            let entry_start = entry_idx as usize * entry_size;
+                            let entry = &db[entry_start..entry_start + entry_size];
+
+                            if hint_idx < num_reg {
+                                if select_val < cutoff {
+                                    xor_bytes_inplace(&mut parity, entry);
+                                }
+                            } else {
+                                if select_val < cutoff {
+                                    xor_bytes_inplace(&mut parity, entry);
+                                } else if let Some(ref mut backup) = backup_high {
+                                    xor_bytes_inplace(backup, entry);
+                                }
+                            }
+                        }
+
+                        if hint_idx < num_reg {
+                            let extra_idx = (extra_block as u64 * block_size) + extra_offset as u64;
+                            if extra_idx < p.num_entries {
+                                let extra_start = extra_idx as usize * entry_size;
+                                let extra_entry = &db[extra_start..extra_start + entry_size];
+                                xor_bytes_inplace(&mut parity, extra_entry);
+                            }
+                        }
+                    }
+
+                    let done = phase2_done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if done as u64 % log_every_hint == 0 || done as u64 == total_hints {
+                        let elapsed = phase2_start.elapsed().as_secs_f64();
+                        let rate = done as f64 / elapsed.max(1e-9);
+                        let eta = if rate > 0.0 {
+                            (total_hints.saturating_sub(done as u64)) as f64 / rate
+                        } else {
+                            0.0
+                        };
+                        let pct = done as f64 * 100.0 / total_hints.max(1) as f64;
+                        println!(
+                            "progress phase=phase2 pct={:.1} elapsed_s={:.0} eta_s={:.0}",
+                            pct, elapsed, eta
+                        );
+                    }
+
+                    ParityResult { parity, backup_high }
+                },
+            )
+            .collect();
+
+        let mut parities = Vec::with_capacity(num_total);
+        let mut backup_parities_high = vec![vec![0u8; entry_size]; p.num_backup_hints as usize];
+        for (idx, result) in parity_results.into_iter().enumerate() {
+            parities.push(result.parity);
+            if let Some(backup) = result.backup_high {
+                backup_parities_high[idx - num_reg] = backup;
             }
         }
+
+        self.hints.parities = parities;
+        self.hints.backup_parities_high = backup_parities_high;
     }
 }
 
