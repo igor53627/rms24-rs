@@ -26,6 +26,8 @@ struct Args {
     seed: u64,
     #[arg(long, default_value = "rms24")]
     mode: String,
+    #[arg(long)]
+    coverage_index: bool,
 }
 
 fn prf_from_seed(seed: u64) -> Prf {
@@ -46,6 +48,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut client = OnlineClient::new(params.clone(), prf, args.seed);
     client.generate_hints(&db)?;
+    let coverage = if args.coverage_index {
+        Some(client.build_coverage_index())
+    } else {
+        None
+    };
 
     let mode = match args.mode.as_str() {
         "keywordpir" => Mode::KeywordPir,
@@ -67,7 +74,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     for i in 0..args.query_count {
         let idx = (i % num_entries as u64) as u64;
-        let (real_query, dummy_query, real_hint) = client.build_network_queries(idx)?;
+        let (real_query, dummy_query, real_hint) = match &coverage {
+            Some(coverage) => client.build_network_queries_with_coverage(idx, coverage)?,
+            None => client.build_network_queries(idx)?,
+        };
 
         let real = Query { id: real_query.id, subset: real_query.subset };
         let dummy = Query { id: dummy_query.id, subset: dummy_query.subset };
@@ -81,7 +91,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         write_frame(&mut stream, &bytes)?;
         let _dummy_reply: Reply = bincode::deserialize(&read_frame(&mut stream)?)?;
 
-        let _ = client.consume_network_reply(idx, real_hint, reply.parity)?;
+        if let Some(_) = coverage {
+            let _ = client.decode_reply_static(real_hint, reply.parity)?;
+        } else {
+            let _ = client.consume_network_reply(idx, real_hint, reply.parity)?;
+        }
     }
     let elapsed = start.elapsed();
     println!("elapsed_ms={}", elapsed.as_millis());
@@ -106,7 +120,9 @@ mod tests {
             "127.0.0.1:4000",
             "--query-count",
             "1000",
+            "--coverage-index",
         ]);
         assert_eq!(args.query_count, 1000);
+        assert!(args.coverage_index);
     }
 }

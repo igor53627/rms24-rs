@@ -10,6 +10,7 @@ SERVER_ADDR=${SERVER_ADDR:-"127.0.0.1:4000"}
 ENTRY_SIZE=${ENTRY_SIZE:-40}
 LAMBDA=${LAMBDA:-80}
 SEED=${SEED:-42}
+RMS24_COVERAGE_INDEX=${RMS24_COVERAGE_INDEX:-}
 
 MODES_DEFAULT=("rms24")
 THREADS_DEFAULT=(1 4)
@@ -48,6 +49,7 @@ write_env() {
     echo "lambda=$LAMBDA"
     echo "seed=$SEED"
     echo "data_root=$DATA_ROOT"
+    echo "coverage_index=$RMS24_COVERAGE_INDEX"
     echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } | tee "$ENV_FILE"
 }
@@ -74,11 +76,17 @@ case "$DATASET" in
     DATA_BASE_URL="https://pir.53627.org/mainnet-v3-slice-1m-mixed"
     DATA_DIR="$DATA_ROOT/slice-1m"
     DATA_FILES=("database.bin" "account-mapping.bin" "storage-mapping.bin" "metadata.json")
+    if [[ -z "$RMS24_COVERAGE_INDEX" ]]; then
+      RMS24_COVERAGE_INDEX=1
+    fi
     ;;
   full)
     DATA_BASE_URL="https://pir.53627.org/mainnet-pir-data-v3"
     DATA_DIR="$DATA_ROOT/full"
     DATA_FILES=("database.bin" "account-mapping.bin" "storage-mapping.bin" "code_store.bin" "manifest.json" "metadata.json")
+    if [[ -z "$RMS24_COVERAGE_INDEX" ]]; then
+      RMS24_COVERAGE_INDEX=0
+    fi
     ;;
   *)
     echo "unknown DATASET=$DATASET (expected slice or full)" >&2
@@ -135,6 +143,10 @@ for mode in "${MODES[@]}"; do
     for qc in "${QUERIES[@]}"; do
       run_log="$RUN_DIR/client_${mode}_${threads}_${qc}.log"
       start_run=$(now_ms)
+      COVERAGE_FLAG=()
+      if [[ "$RMS24_COVERAGE_INDEX" == "1" ]]; then
+        COVERAGE_FLAG=("--coverage-index")
+      fi
       target/release/rms24_client \
         --db "$DATA_DIR/database.bin" \
         --entry-size "$ENTRY_SIZE" \
@@ -144,6 +156,7 @@ for mode in "${MODES[@]}"; do
         --threads "$threads" \
         --seed "$SEED" \
         --mode "$mode" \
+        "${COVERAGE_FLAG[@]}" \
         > "$run_log" 2>&1
       end_run=$(now_ms)
       elapsed_ms=$(rg -o "elapsed_ms=\d+" -m 1 "$run_log" | cut -d= -f2 || echo "0")
