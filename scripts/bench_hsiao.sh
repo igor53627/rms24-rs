@@ -108,7 +108,7 @@ echo "run_id,dataset,mode,threads,query_count,elapsed_ms" > "$SUMMARY"
 SERVER_LOG_RAW="$RUN_DIR/server.log"
 
 start_server=$(now_ms)
-target/release/rms24-server \
+target/release/rms24_server \
   --db "$DATA_DIR/database.bin" \
   --entry-size "$ENTRY_SIZE" \
   --lambda "$LAMBDA" \
@@ -135,7 +135,7 @@ for mode in "${MODES[@]}"; do
     for qc in "${QUERIES[@]}"; do
       run_log="$RUN_DIR/client_${mode}_${threads}_${qc}.log"
       start_run=$(now_ms)
-      target/release/rms24-client \
+      target/release/rms24_client \
         --db "$DATA_DIR/database.bin" \
         --entry-size "$ENTRY_SIZE" \
         --lambda "$LAMBDA" \
