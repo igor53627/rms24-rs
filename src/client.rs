@@ -211,6 +211,14 @@ impl OnlineClient {
         }
     }
 
+    pub fn generate_hints(&mut self, db: &[u8]) -> Result<(), ClientError> {
+        let mut offline = Client::with_prf(self.params.clone(), self.prf.clone());
+        offline.generate_hints(db);
+        self.hints = offline.hints;
+        self.available_hints = (0..self.params.num_reg_hints as usize).collect();
+        Ok(())
+    }
+
     pub fn serialize_state(&self) -> Result<Vec<u8>, ClientError> {
         Self::bincode_options()
             .serialize(self)
@@ -230,6 +238,82 @@ impl OnlineClient {
         let id = self.next_query_id;
         self.next_query_id += 1;
         id
+    }
+
+    pub fn build_network_queries(
+        &mut self,
+        index: u64,
+    ) -> Result<(crate::messages::Query, crate::messages::Query, usize), ClientError> {
+        if index >= self.params.num_entries {
+            return Err(ClientError::InvalidIndex);
+        }
+
+        let target_block = self.params.block_of(index) as u32;
+        let target_offset = self.params.offset_in_block(index) as u32;
+
+        let mut candidates = Vec::new();
+        for &hint_id in &self.available_hints {
+            let subset = self.build_subset_for_hint(hint_id);
+            if subset
+                .iter()
+                .any(|(block, offset)| *block == target_block && *offset == target_offset)
+            {
+                candidates.push((hint_id, subset));
+            }
+        }
+
+        if candidates.is_empty() {
+            return Err(ClientError::NoValidHint);
+        }
+
+        let id = self.next_query_id();
+        let candidate_idx = self.rng.gen_range(0..candidates.len());
+        let (real_hint, mut real_subset) = candidates.swap_remove(candidate_idx);
+        if let Some(pos) = real_subset
+            .iter()
+            .position(|(block, offset)| *block == target_block && *offset == target_offset)
+        {
+            real_subset.swap_remove(pos);
+        }
+
+        let dummy_hint = self.available_hints[self.rng.gen_range(0..self.available_hints.len())];
+        let dummy_subset = self.build_subset_for_hint(dummy_hint);
+
+        let real_query = crate::messages::Query {
+            id,
+            subset: real_subset,
+        };
+        let dummy_query = crate::messages::Query {
+            id,
+            subset: dummy_subset,
+        };
+
+        Ok((real_query, dummy_query, real_hint))
+    }
+
+    pub fn consume_network_reply(
+        &mut self,
+        index: u64,
+        real_hint: usize,
+        mut parity: Vec<u8>,
+    ) -> Result<Vec<u8>, ClientError> {
+        if parity.len() != self.params.entry_size {
+            return Err(ClientError::ParityLengthMismatch);
+        }
+
+        let hint_parity = &self.hints.parities[real_hint];
+        if parity.len() != hint_parity.len() {
+            return Err(ClientError::ParityLengthMismatch);
+        }
+        xor_bytes_inplace(&mut parity, hint_parity);
+
+        if let Some(pos) = self.available_hints.iter().position(|&hint| hint == real_hint) {
+            self.available_hints.swap_remove(pos);
+        }
+        self.replenish_hint(real_hint, index, &parity)?;
+        self.available_hints.push(real_hint);
+
+        Ok(parity)
     }
 
     fn build_subset_for_hint(&self, hint_id: usize) -> Vec<(u32, u32)> {
@@ -680,6 +764,23 @@ mod tests {
             (index * 4 + 3) as u8,
         ];
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_online_client_build_and_consume_network_query() {
+        let params = Params::new(16, 4, 4);
+        let prf = Prf::random();
+        let mut client = OnlineClient::new(params.clone(), prf, 1);
+
+        let db = vec![7u8; (params.num_entries as usize) * params.entry_size];
+        client.generate_hints(&db).unwrap();
+
+        let (real_query, dummy_query, real_hint) = client.build_network_queries(3).unwrap();
+        assert_eq!(real_query.id, dummy_query.id);
+        assert!(!real_query.subset.is_empty());
+
+        let parity = vec![0u8; params.entry_size];
+        let _ = client.consume_network_reply(3, real_hint, parity).unwrap();
     }
 
     #[test]
