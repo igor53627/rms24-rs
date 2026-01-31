@@ -396,6 +396,19 @@ impl OnlineClient {
         Ok(parity)
     }
 
+    pub fn decode_reply_static(
+        &self,
+        real_hint: usize,
+        mut parity: Vec<u8>,
+    ) -> Result<Vec<u8>, ClientError> {
+        let hint_parity = &self.hints.parities[real_hint];
+        if parity.len() != hint_parity.len() {
+            return Err(ClientError::ParityLengthMismatch);
+        }
+        xor_bytes_inplace(&mut parity, hint_parity);
+        Ok(parity)
+    }
+
     fn build_subset_for_hint(&self, hint_id: usize) -> Vec<(u32, u32)> {
         let cutoff = self.hints.cutoffs[hint_id];
         if cutoff == 0 {
@@ -918,6 +931,20 @@ mod tests {
 
         assert!(coverage[index as usize].contains(&(real_hint as u32)));
         assert_eq!(real_query.id, real_query.id);
+    }
+
+    #[test]
+    fn test_decode_reply_static() {
+        let params = Params::new(16, 4, 2);
+        let prf = Prf::random();
+        let mut client = OnlineClient::new(params.clone(), prf, 1);
+        let db = vec![0u8; (params.num_entries as usize) * params.entry_size];
+        client.generate_hints(&db).unwrap();
+
+        let real_hint = 0;
+        let parity = vec![0u8; params.entry_size];
+        let decoded = client.decode_reply_static(real_hint, parity).unwrap();
+        assert_eq!(decoded.len(), params.entry_size);
     }
 
     #[test]
