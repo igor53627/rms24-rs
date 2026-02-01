@@ -19,3 +19,8 @@ This project is a Rust library with optional Cargo features.
 - `rms24_client --timing-every <N>`: Optional. Emit timing summaries every N occurrences per phase (default: 1000).
 - `rms24_server --timing`: Optional. Emits per-phase timing summaries during runs.
 - `rms24_server --timing-every <N>`: Optional. Emit timing summaries every N occurrences per phase (default: 1000).
+
+## Online batching (benchmark client/server)
+
+- `rms24_client --batch-size <N>`: Optional. Send up to N network queries per frame.
+- `rms24_server --max-batch-queries <N>`: Optional. Cap the number of queries in a batch.
