@@ -81,7 +81,7 @@ fn handle_client(
         let answer_start = Instant::now();
         let reply = server.answer(&rms_query).unwrap();
         record("answer", answer_start.elapsed().as_micros() as u64);
-        let out = Reply { id: reply.id, parity: reply.parity };
+        let out = Reply::Ok { id: reply.id, parity: reply.parity };
         let serialize_start = Instant::now();
         let out_bytes = bincode::serialize(&out).unwrap();
         record("serialize", serialize_start.elapsed().as_micros() as u64);

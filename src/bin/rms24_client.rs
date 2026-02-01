@@ -156,6 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         query_count: args.query_count,
         threads: args.threads,
         seed: args.seed,
+        batch_size: 1,
+        max_batch_queries: 1,
     };
 
     let mut stream = TcpStream::connect(&args.server)?;
@@ -204,6 +206,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         record("read_frame", read_start.elapsed().as_micros() as u64);
         let deserialize_start = Instant::now();
         let reply: Reply = bincode::deserialize(&reply_bytes)?;
+        let parity = match reply {
+            Reply::Ok { parity, .. } => parity,
+            Reply::Error { message, .. } => return Err(message.into()),
+        };
         record("deserialize", deserialize_start.elapsed().as_micros() as u64);
 
         let serialize_start = Instant::now();
@@ -216,14 +222,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let dummy_reply_bytes = read_frame(&mut stream)?;
         record("read_frame", read_start.elapsed().as_micros() as u64);
         let deserialize_start = Instant::now();
-        let _dummy_reply: Reply = bincode::deserialize(&dummy_reply_bytes)?;
+        let dummy_reply: Reply = bincode::deserialize(&dummy_reply_bytes)?;
+        match dummy_reply {
+            Reply::Ok { .. } => {}
+            Reply::Error { message, .. } => return Err(message.into()),
+        }
         record("deserialize", deserialize_start.elapsed().as_micros() as u64);
 
         let decode_start = Instant::now();
         if let Some(_) = coverage {
-            let _ = client.decode_reply_static(real_hint, reply.parity)?;
+            let _ = client.decode_reply_static(real_hint, parity)?;
         } else {
-            let _ = client.consume_network_reply(idx, real_hint, reply.parity)?;
+            let _ = client.consume_network_reply(idx, real_hint, parity)?;
         }
         record("decode", decode_start.elapsed().as_micros() as u64);
     }
