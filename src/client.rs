@@ -1001,6 +1001,41 @@ mod tests {
     }
 
     #[test]
+    fn test_query_bytes_equivalent_with_cache() {
+        let params = Params::new(64, 4, 2);
+        let prf = Prf::new([5u8; 32]);
+        let mut client_uncached = OnlineClient::new(params.clone(), prf.clone(), 123);
+        let mut client_cached = OnlineClient::new(params.clone(), prf, 123);
+
+        let db = vec![7u8; (client_uncached.params.num_entries as usize) * client_uncached.params.entry_size];
+        client_uncached.generate_hints(&db).unwrap();
+        client_cached.generate_hints(&db).unwrap();
+
+        client_cached.get_subset_for_hint(0);
+
+        let mut index = None;
+        for &hint_id in &client_uncached.available_hints {
+            let subset = client_uncached.build_subset_for_hint(hint_id);
+            if let Some((block, offset)) = subset.first().copied() {
+                let candidate =
+                    (block as u64) * client_uncached.params.block_size + (offset as u64);
+                if candidate < client_uncached.params.num_entries {
+                    index = Some(candidate);
+                    break;
+                }
+            }
+        }
+        let index = index.expect("expected at least one hint to cover an entry");
+
+        let (real_unc, dummy_unc, _h_unc) = client_uncached.build_network_queries(index).unwrap();
+        let (real_cached, dummy_cached, _h_cached) =
+            client_cached.build_network_queries(index).unwrap();
+
+        assert_eq!(real_unc, real_cached);
+        assert_eq!(dummy_unc, dummy_cached);
+    }
+
+    #[test]
     fn test_client_state_invalid_available_hints() {
         let params = Params::new(16, 40, 2);
         let mut client = OnlineClient::new(params, Prf::random(), 1234u64);
