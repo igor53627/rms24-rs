@@ -1,6 +1,7 @@
 use clap::Parser;
 use rms24::bench_framing::{read_frame, write_frame};
 use rms24::bench_proto::{Mode, Query, Reply, RunConfig};
+use rms24::bench_timing::TimingCounters;
 use rms24::client::OnlineClient;
 use rms24::params::Params;
 use rms24::prf::Prf;
@@ -31,6 +32,10 @@ struct Args {
     coverage_index: bool,
     #[arg(long)]
     state: Option<String>,
+    #[arg(long)]
+    timing: bool,
+    #[arg(long, default_value = "1000")]
+    timing_every: u64,
 }
 
 fn prf_from_seed(seed: u64) -> Prf {
@@ -157,34 +162,78 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg_bytes = bincode::serialize(&cfg)?;
     write_frame(&mut stream, &cfg_bytes)?;
 
+    const PHASES: [&str; 6] = [
+        "build_query",
+        "serialize",
+        "write_frame",
+        "read_frame",
+        "deserialize",
+        "decode",
+    ];
+    let mut timing = args.timing.then(|| TimingCounters::new(args.timing_every));
+    let mut record = |phase: &str, micros: u64| {
+        if let Some(ref mut timing) = timing {
+            timing.add(phase, micros);
+            if timing.should_log(phase) {
+                println!("{}", timing.summary_line(phase));
+            }
+        }
+    };
+
     let start = Instant::now();
     for i in 0..args.query_count {
         let idx = (i % num_entries as u64) as u64;
+        let build_start = Instant::now();
         let (real_query, dummy_query, real_hint) = match &coverage {
             Some(coverage) => client.build_network_queries_with_coverage(idx, coverage)?,
             None => client.build_network_queries(idx)?,
         };
+        record("build_query", build_start.elapsed().as_micros() as u64);
 
         let real = Query { id: real_query.id, subset: real_query.subset };
         let dummy = Query { id: dummy_query.id, subset: dummy_query.subset };
 
+        let serialize_start = Instant::now();
         let bytes = bincode::serialize(&real)?;
+        record("serialize", serialize_start.elapsed().as_micros() as u64);
+        let write_start = Instant::now();
         write_frame(&mut stream, &bytes)?;
+        record("write_frame", write_start.elapsed().as_micros() as u64);
+        let read_start = Instant::now();
         let reply_bytes = read_frame(&mut stream)?;
+        record("read_frame", read_start.elapsed().as_micros() as u64);
+        let deserialize_start = Instant::now();
         let reply: Reply = bincode::deserialize(&reply_bytes)?;
+        record("deserialize", deserialize_start.elapsed().as_micros() as u64);
 
+        let serialize_start = Instant::now();
         let bytes = bincode::serialize(&dummy)?;
+        record("serialize", serialize_start.elapsed().as_micros() as u64);
+        let write_start = Instant::now();
         write_frame(&mut stream, &bytes)?;
-        let _dummy_reply: Reply = bincode::deserialize(&read_frame(&mut stream)?)?;
+        record("write_frame", write_start.elapsed().as_micros() as u64);
+        let read_start = Instant::now();
+        let dummy_reply_bytes = read_frame(&mut stream)?;
+        record("read_frame", read_start.elapsed().as_micros() as u64);
+        let deserialize_start = Instant::now();
+        let _dummy_reply: Reply = bincode::deserialize(&dummy_reply_bytes)?;
+        record("deserialize", deserialize_start.elapsed().as_micros() as u64);
 
+        let decode_start = Instant::now();
         if let Some(_) = coverage {
             let _ = client.decode_reply_static(real_hint, reply.parity)?;
         } else {
             let _ = client.consume_network_reply(idx, real_hint, reply.parity)?;
         }
+        record("decode", decode_start.elapsed().as_micros() as u64);
     }
     let elapsed = start.elapsed();
     println!("elapsed_ms={}", elapsed.as_millis());
+    if let Some(timing) = timing {
+        for phase in PHASES {
+            println!("{}", timing.summary_line(phase));
+        }
+    }
     Ok(())
 }
 
@@ -226,6 +275,20 @@ mod tests {
             "/tmp/state.bin",
         ]);
         assert_eq!(args.state.as_deref(), Some("/tmp/state.bin"));
+    }
+
+    #[test]
+    fn test_parse_args_timing_flags() {
+        let args = Args::parse_from([
+            "rms24-client",
+            "--db",
+            "db.bin",
+            "--timing",
+            "--timing-every",
+            "25",
+        ]);
+        assert!(args.timing);
+        assert_eq!(args.timing_every, 25);
     }
 
     #[test]
