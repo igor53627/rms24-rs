@@ -1,6 +1,6 @@
 use clap::Parser;
 use rms24::bench_framing::{read_frame, write_frame};
-use rms24::bench_proto::{Mode, Query, Reply, RunConfig};
+use rms24::bench_proto::{BatchRequest, ClientFrame, Mode, Query, Reply, RunConfig, ServerFrame};
 use rms24::bench_timing::TimingCounters;
 use rms24::client::OnlineClient;
 use rms24::params::Params;
@@ -36,6 +36,8 @@ struct Args {
     timing: bool,
     #[arg(long, default_value = "1000")]
     timing_every: u64,
+    #[arg(long, default_value = "1")]
+    batch_size: usize,
 }
 
 fn prf_from_seed(seed: u64) -> Prf {
@@ -132,8 +134,76 @@ fn load_or_generate_client(
     Ok(client)
 }
 
+struct PendingItem {
+    query: Query,
+    kind: PendingKind,
+}
+
+enum PendingKind {
+    Real { index: u64, hint: usize },
+    Dummy,
+}
+
+fn flush_batch(
+    stream: &mut TcpStream,
+    pending: &mut Vec<PendingItem>,
+    batch_size: usize,
+    client: &mut OnlineClient,
+    coverage: &Option<Vec<Vec<u32>>>,
+    record: &mut impl FnMut(&str, u64),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let take = batch_size.min(pending.len());
+    if take == 0 {
+        return Ok(());
+    }
+    let batch: Vec<PendingItem> = pending.drain(0..take).collect();
+    let queries: Vec<Query> = batch.iter().map(|p| p.query.clone()).collect();
+    let frame = if queries.len() == 1 {
+        ClientFrame::Query(queries[0].clone())
+    } else {
+        ClientFrame::BatchRequest(BatchRequest { queries })
+    };
+
+    let serialize_start = Instant::now();
+    let bytes = bincode::serialize(&frame)?;
+    record("serialize", serialize_start.elapsed().as_micros() as u64);
+    let write_start = Instant::now();
+    write_frame(&mut *stream, &bytes)?;
+    record("write_frame", write_start.elapsed().as_micros() as u64);
+    let read_start = Instant::now();
+    let reply_bytes = read_frame(&mut *stream)?;
+    record("read_frame", read_start.elapsed().as_micros() as u64);
+    let deserialize_start = Instant::now();
+    let reply_frame: ServerFrame = bincode::deserialize(&reply_bytes)?;
+    record("deserialize", deserialize_start.elapsed().as_micros() as u64);
+
+    let replies = match reply_frame {
+        ServerFrame::Reply(reply) => vec![reply],
+        ServerFrame::BatchReply(batch) => batch.replies,
+        ServerFrame::Error { message } => return Err(message.into()),
+    };
+
+    for (item, reply) in batch.into_iter().zip(replies.into_iter()) {
+        match (item.kind, reply) {
+            (PendingKind::Real { index, hint }, Reply::Ok { parity, .. }) => {
+                let decode_start = Instant::now();
+                if let Some(_) = coverage {
+                    let _ = client.decode_reply_static(hint, parity)?;
+                } else {
+                    let _ = client.consume_network_reply(index, hint, parity)?;
+                }
+                record("decode", decode_start.elapsed().as_micros() as u64);
+            }
+            (_, Reply::Ok { .. }) => {}
+            (_, Reply::Error { message, .. }) => return Err(message.into()),
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let batch_size = args.batch_size.max(1);
     let db = std::fs::read(&args.db)?;
     let num_entries = db.len() / args.entry_size;
     let params = Params::new(num_entries as u64, args.entry_size, args.lambda);
@@ -156,8 +226,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         query_count: args.query_count,
         threads: args.threads,
         seed: args.seed,
-        batch_size: 1,
-        max_batch_queries: 1,
+        batch_size,
+        max_batch_queries: batch_size,
     };
 
     let mut stream = TcpStream::connect(&args.server)?;
@@ -183,6 +253,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let start = Instant::now();
+    let mut pending: Vec<PendingItem> = Vec::new();
     for i in 0..args.query_count {
         let idx = (i % num_entries as u64) as u64;
         let build_start = Instant::now();
@@ -195,47 +266,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let real = Query { id: real_query.id, subset: real_query.subset };
         let dummy = Query { id: dummy_query.id, subset: dummy_query.subset };
 
-        let serialize_start = Instant::now();
-        let bytes = bincode::serialize(&real)?;
-        record("serialize", serialize_start.elapsed().as_micros() as u64);
-        let write_start = Instant::now();
-        write_frame(&mut stream, &bytes)?;
-        record("write_frame", write_start.elapsed().as_micros() as u64);
-        let read_start = Instant::now();
-        let reply_bytes = read_frame(&mut stream)?;
-        record("read_frame", read_start.elapsed().as_micros() as u64);
-        let deserialize_start = Instant::now();
-        let reply: Reply = bincode::deserialize(&reply_bytes)?;
-        let parity = match reply {
-            Reply::Ok { parity, .. } => parity,
-            Reply::Error { message, .. } => return Err(message.into()),
-        };
-        record("deserialize", deserialize_start.elapsed().as_micros() as u64);
+        pending.push(PendingItem {
+            query: real,
+            kind: PendingKind::Real { index: idx, hint: real_hint },
+        });
+        pending.push(PendingItem {
+            query: dummy,
+            kind: PendingKind::Dummy,
+        });
 
-        let serialize_start = Instant::now();
-        let bytes = bincode::serialize(&dummy)?;
-        record("serialize", serialize_start.elapsed().as_micros() as u64);
-        let write_start = Instant::now();
-        write_frame(&mut stream, &bytes)?;
-        record("write_frame", write_start.elapsed().as_micros() as u64);
-        let read_start = Instant::now();
-        let dummy_reply_bytes = read_frame(&mut stream)?;
-        record("read_frame", read_start.elapsed().as_micros() as u64);
-        let deserialize_start = Instant::now();
-        let dummy_reply: Reply = bincode::deserialize(&dummy_reply_bytes)?;
-        match dummy_reply {
-            Reply::Ok { .. } => {}
-            Reply::Error { message, .. } => return Err(message.into()),
+        if pending.len() >= batch_size {
+            flush_batch(
+                &mut stream,
+                &mut pending,
+                batch_size,
+                &mut client,
+                &coverage,
+                &mut record,
+            )?;
         }
-        record("deserialize", deserialize_start.elapsed().as_micros() as u64);
-
-        let decode_start = Instant::now();
-        if let Some(_) = coverage {
-            let _ = client.decode_reply_static(real_hint, parity)?;
-        } else {
-            let _ = client.consume_network_reply(idx, real_hint, parity)?;
-        }
-        record("decode", decode_start.elapsed().as_micros() as u64);
+    }
+    while !pending.is_empty() {
+        flush_batch(
+            &mut stream,
+            &mut pending,
+            batch_size,
+            &mut client,
+            &coverage,
+            &mut record,
+        )?;
     }
     let elapsed = start.elapsed();
     println!("elapsed_ms={}", elapsed.as_millis());
@@ -299,6 +358,18 @@ mod tests {
         ]);
         assert!(args.timing);
         assert_eq!(args.timing_every, 25);
+    }
+
+    #[test]
+    fn test_parse_args_batch_size() {
+        let args = Args::parse_from([
+            "rms24-client",
+            "--db",
+            "db.bin",
+            "--batch-size",
+            "8",
+        ]);
+        assert_eq!(args.batch_size, 8);
     }
 
     #[test]
