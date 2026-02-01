@@ -1,8 +1,8 @@
 use clap::Parser;
 use rms24::bench_framing::{read_frame, write_frame};
-use rms24::bench_proto::{Query, Reply, RunConfig};
+use rms24::bench_handler::handle_client_frame;
+use rms24::bench_proto::{ClientFrame, RunConfig};
 use rms24::bench_timing::TimingCounters;
-use rms24::messages::Query as RmsQuery;
 use rms24::params::Params;
 use rms24::server::{InMemoryDb, Server};
 use std::io;
@@ -25,6 +25,8 @@ struct Args {
     timing: bool,
     #[arg(long, default_value = "1000")]
     timing_every: u64,
+    #[arg(long, default_value = "1")]
+    max_batch_queries: usize,
 }
 
 const TIMING_PHASES: [&str; 5] = [
@@ -46,9 +48,11 @@ fn handle_client(
     server: Arc<Server<InMemoryDb>>,
     timing_enabled: bool,
     timing_every: u64,
+    max_batch_queries: usize,
 ) -> io::Result<()> {
     let cfg_bytes = read_frame(&mut stream)?;
-    let _cfg: RunConfig = bincode::deserialize(&cfg_bytes).unwrap();
+    let cfg: RunConfig = bincode::deserialize(&cfg_bytes).unwrap();
+    let max_batch = max_batch_queries.min(cfg.max_batch_queries);
 
     let mut timing = timing_enabled.then(|| TimingCounters::new(timing_every));
     let mut record = |phase: &str, micros: u64| {
@@ -75,13 +79,11 @@ fn handle_client(
             }
         };
         let deserialize_start = Instant::now();
-        let query: Query = bincode::deserialize(&msg).unwrap();
+        let frame: ClientFrame = bincode::deserialize(&msg).unwrap();
         record("deserialize", deserialize_start.elapsed().as_micros() as u64);
-        let rms_query = RmsQuery { id: query.id, subset: query.subset };
         let answer_start = Instant::now();
-        let reply = server.answer(&rms_query).unwrap();
+        let out = handle_client_frame(&server, frame, max_batch);
         record("answer", answer_start.elapsed().as_micros() as u64);
-        let out = Reply::Ok { id: reply.id, parity: reply.parity };
         let serialize_start = Instant::now();
         let out_bytes = bincode::serialize(&out).unwrap();
         record("serialize", serialize_start.elapsed().as_micros() as u64);
@@ -110,15 +112,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = Arc::new(server);
     let timing_enabled = args.timing;
     let timing_every = args.timing_every;
+    let max_batch_queries = args.max_batch_queries;
 
     let listener = TcpListener::bind(&args.listen)?;
     for stream in listener.incoming() {
         let server = Arc::clone(&server);
         let timing_enabled = timing_enabled;
         let timing_every = timing_every;
+        let max_batch_queries = max_batch_queries;
         thread::spawn(move || {
             if let Ok(stream) = stream {
-                let _ = handle_client(stream, server, timing_enabled, timing_every);
+                let _ = handle_client(stream, server, timing_enabled, timing_every, max_batch_queries);
             }
         });
     }
@@ -159,6 +163,18 @@ mod tests {
         ]);
         assert!(args.timing);
         assert_eq!(args.timing_every, 25);
+    }
+
+    #[test]
+    fn test_parse_args_batching() {
+        let args = Args::parse_from([
+            "rms24-server",
+            "--db",
+            "db.bin",
+            "--max-batch-queries",
+            "32",
+        ]);
+        assert_eq!(args.max_batch_queries, 32);
     }
 
     #[test]
