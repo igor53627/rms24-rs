@@ -985,6 +985,22 @@ mod tests {
     }
 
     #[test]
+    fn test_subset_cache_reuse() {
+        let params = Params::new(64, 4, 2);
+        let prf = Prf::new([9u8; 32]);
+        let mut client = OnlineClient::new(params, prf, 1);
+
+        let hint_id = 0usize;
+        let _ = client.get_subset_for_hint(hint_id);
+        let first = client.subset_cache[hint_id].clone();
+        let _ = client.get_subset_for_hint(hint_id);
+        let second = client.subset_cache[hint_id].clone();
+
+        assert_eq!(first, second);
+        assert!(first.is_some());
+    }
+
+    #[test]
     fn test_client_state_invalid_available_hints() {
         let params = Params::new(16, 40, 2);
         let mut client = OnlineClient::new(params, Prf::random(), 1234u64);
