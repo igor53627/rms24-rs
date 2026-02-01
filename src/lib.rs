@@ -13,6 +13,7 @@ pub mod server;
 pub mod updates;
 pub mod bench_proto;
 pub mod bench_framing;
+pub mod bench_timing;
 
 #[cfg(feature = "cuda")]
 pub mod gpu;
