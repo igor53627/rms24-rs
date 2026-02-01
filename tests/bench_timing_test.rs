@@ -10,3 +10,10 @@ fn test_timing_summary_format() {
     assert!(line.contains("count=2"));
     assert!(line.contains("total_us=2000"));
 }
+
+#[test]
+fn test_timing_helper_smoke() {
+    let mut t = rms24::bench_timing::TimingCounters::new(1);
+    t.add("read", 10);
+    assert!(t.summary_line("read").contains("count=1"));
+}
