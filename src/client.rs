@@ -1149,7 +1149,11 @@ mod tests {
         client.generate_hints(&db).unwrap();
         let coverage = client.build_coverage_index();
 
-        let index = 3u64;
+        let index = coverage
+            .iter()
+            .position(|hints| !hints.is_empty())
+            .map(|idx| idx as u64)
+            .expect("expected at least one covered index");
         let (real_query, _dummy_query, real_hint) =
             client.build_network_queries_with_coverage(index, &coverage).unwrap();
 
