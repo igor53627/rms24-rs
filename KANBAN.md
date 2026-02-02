@@ -16,6 +16,8 @@
 - [x] Benchmark client/server binaries with TCP timeouts + validation hardening
 - [x] Client state cache + coverage index for reproducible runs
 - [x] Benchmark harness script with dataset download + reporting
+- [x] KeywordPIR protocol stubs (Mode + online query/reply + handler tests)
+- [x] Benchmark client accepts `--mode keywordpir` (still RMS24 queries)
 
 ## In Progress
 
@@ -31,7 +33,7 @@
 - [ ] Port cuckoo hashing from Python
 - [ ] Builder binary for KeywordPIR tables + metadata
 - [ ] Collision table + tag pipeline (8-byte tags, collision DB)
-- [ ] KeywordPIR client wrapper + query path
+- [ ] KeywordPIR client wrapper + query path (replace bench stubs)
 - [ ] KeywordPIR benchmark sweep (slice + full, reuse state cache)
 
 ### Benchmarking + Profiling

@@ -1,10 +1,10 @@
 # RMS24 KeywordPIR Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Claude:** REQUIRED SUB-SKILL: Use @superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Implement full KeywordPIR inside this repo (cuckoo table build + client wrapper + benchmark harness integration) using existing `database.bin` and mapping files, plus a builder binary that produces keywordpir tables and metadata.
 
-**Architecture:** Add a `keyword_pir` module with cuckoo hashing, mapping parsing, and query logic built on RMS24 index PIR. Provide a `rms24_keywordpir_build` binary that builds the main keywordpir table and collision table from existing mapping files. Update benchmark client to run real KeywordPIR when `--mode keywordpir` is set, using metadata + collision tags, while the server stays a standard RMS24 index server over the keywordpir DB file.
+**Architecture:** Add a `keyword_pir` module with cuckoo hashing, mapping parsing, and query logic built on RMS24 index PIR. Provide a `rms24_keywordpir_build` binary that builds the main keywordpir table and collision table from existing mapping files. Update benchmark client to run real KeywordPIR when `--mode keywordpir` is set, using metadata + collision tags, while the server stays a standard RMS24 index server over the keywordpir DB file. Online protocol stubs already exist (Mode::KeywordPir + online Query/Reply + handler trait), so this plan focuses on the KeywordPIR data path and benchmark wiring.
 
 **Tech Stack:** Rust 2021, `serde`, `bincode`, `sha3`, `rand_chacha`, `memmap2`, `clap`.
 
@@ -119,7 +119,8 @@ Expected: PASS
 
 ```bash
 jj add src/keyword_pir/mod.rs src/lib.rs
-jj describe -m "feat: add keyword_pir module skeleton and mapping parse"
+jj describe -m "feat: add keyword_pir module skeleton and mapping parse" \
+  -m "Plan: docs/plans/2026-02-02-rms24-keywordpir-implementation.md"
 ```
 
 ---
@@ -283,7 +284,8 @@ Expected: PASS
 
 ```bash
 jj add src/keyword_pir/mod.rs
-jj describe -m "feat: add cuckoo hashing core for keyword_pir"
+jj describe -m "feat: add cuckoo hashing core for keyword_pir" \
+  -m "Plan: docs/plans/2026-02-02-rms24-keywordpir-implementation.md"
 ```
 
 ---
@@ -348,7 +350,8 @@ Expected: PASS
 
 ```bash
 jj add src/bin/rms24_keywordpir_build.rs src/keyword_pir/mod.rs
-jj describe -m "feat: add keywordpir builder binary"
+jj describe -m "feat: add keywordpir builder binary" \
+  -m "Plan: docs/plans/2026-02-02-rms24-keywordpir-implementation.md"
 ```
 
 ---
@@ -403,7 +406,8 @@ Expected: PASS
 
 ```bash
 jj add src/keyword_pir/mod.rs
-jj describe -m "feat: add keywordpir client wrapper"
+jj describe -m "feat: add keywordpir client wrapper" \
+  -m "Plan: docs/plans/2026-02-02-rms24-keywordpir-implementation.md"
 ```
 
 ---
@@ -472,5 +476,6 @@ Add to `docs/ARCHITECTURE.md`:
 
 ```bash
 jj add src/bin/rms24_client.rs docs/FEATURE_FLAGS.md docs/ARCHITECTURE.md
-jj describe -m "feat: add keywordpir mode to benchmark client"
+jj describe -m "feat: add keywordpir mode to benchmark client" \
+  -m "Plan: docs/plans/2026-02-02-rms24-keywordpir-implementation.md"
 ```
