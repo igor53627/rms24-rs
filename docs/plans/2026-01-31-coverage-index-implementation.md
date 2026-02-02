@@ -51,7 +51,7 @@ fn test_network_queries_with_coverage_selects_hint() {
     let coverage = client.build_coverage_index();
 
     let index = 3u64;
-    let (real_query, _dummy_query, real_hint) =
+    let (real_query, dummy_query, real_hint) =
         client.build_network_queries_with_coverage(index, &coverage).unwrap();
 
     assert!(coverage[index as usize].contains(&(real_hint as u32)));

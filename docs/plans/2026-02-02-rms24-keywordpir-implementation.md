@@ -199,9 +199,15 @@ fn hash_with_seed(key: &[u8], seed: u64) -> usize {
 }
 
 #[derive(Clone, Debug)]
+pub struct CuckooSlot {
+    pub key_hash: [u8; 32],
+    pub value: [u8; 40],
+}
+
+#[derive(Clone, Debug)]
 pub struct CuckooTable {
     cfg: CuckooConfig,
-    slots: Vec<Option<[u8; 40]>>,
+    slots: Vec<Option<CuckooSlot>>,
 }
 
 impl CuckooTable {
@@ -211,33 +217,35 @@ impl CuckooTable {
     }
 
     pub fn insert(&mut self, key: &[u8], value: [u8; 40]) -> Result<(), String> {
+        let key_hash = hash_key(key);
+        let slot = CuckooSlot { key_hash, value };
         let positions = cuckoo_positions(key, &self.cfg);
         for &bucket in &positions {
             for i in 0..self.cfg.bucket_size {
                 let idx = bucket * self.cfg.bucket_size + i;
                 if self.slots[idx].is_none() {
-                    self.slots[idx] = Some(value);
+                    self.slots[idx] = Some(slot);
                     return Ok(());
                 }
             }
         }
         // Minimal deterministic kick loop
-        let mut cur_value = value;
+        let mut cur_slot = slot;
         let mut cur_bucket = positions[0];
         for kick in 0..self.cfg.max_kicks {
             let idx = cur_bucket * self.cfg.bucket_size + (kick % self.cfg.bucket_size);
-            let evicted = self.slots[idx].replace(cur_value);
+            let evicted = self.slots[idx].replace(cur_slot);
             let evicted = match evicted {
                 Some(evicted) => evicted,
                 None => return Ok(()),
             };
-            cur_value = evicted;
-            let evicted_positions = cuckoo_positions(&cur_value[..], &self.cfg);
+            cur_slot = evicted;
+            let evicted_positions = cuckoo_positions(&cur_slot.key_hash, &self.cfg);
             cur_bucket = evicted_positions[0];
             for i in 0..self.cfg.bucket_size {
                 let cand = cur_bucket * self.cfg.bucket_size + i;
                 if self.slots[cand].is_none() {
-                    self.slots[cand] = Some(cur_value);
+                    self.slots[cand] = Some(cur_slot);
                     return Ok(());
                 }
             }
@@ -246,13 +254,14 @@ impl CuckooTable {
     }
 
     pub fn find_candidate(&self, key: &[u8]) -> Option<[u8; 40]> {
-        let positions = cuckoo_positions(key, &self.cfg);
+        let key_hash = hash_key(key);
+        let positions = cuckoo_positions(&key_hash, &self.cfg);
         for &bucket in &positions {
             for i in 0..self.cfg.bucket_size {
                 let idx = bucket * self.cfg.bucket_size + i;
-                if let Some(value) = self.slots[idx] {
-                    if tag_matches_key(key, &value) {
-                        return Some(value);
+                if let Some(slot) = &self.slots[idx] {
+                    if slot.key_hash == key_hash {
+                        return Some(slot.value);
                     }
                 }
             }
@@ -262,7 +271,7 @@ impl CuckooTable {
 }
 ```
 
-(Implement `tag_matches_key` by computing the tag from `key` and comparing to the tag bytes stored in `value`.)
+(Implement `hash_key` using `Sha3_256` of the key bytes.)
 (If the evicted key derivation is needed, replace `cur_value[..]` with a stored key hash; refine in Task 3.)
 
 **Step 4: Run tests to verify they pass**
