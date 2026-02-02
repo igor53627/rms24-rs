@@ -55,7 +55,7 @@ fn test_network_queries_with_coverage_selects_hint() {
         client.build_network_queries_with_coverage(index, &coverage).unwrap();
 
     assert!(coverage[index as usize].contains(&(real_hint as u32)));
-    assert_eq!(real_query.id, real_query.id);
+    assert_eq!(real_query.id, dummy_query.id);
 }
 ```
 

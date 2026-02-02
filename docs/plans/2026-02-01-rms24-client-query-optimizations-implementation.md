@@ -175,6 +175,7 @@ fn test_query_bytes_equivalent_with_cache() {
     let prf = Prf::new([5u8; 32]);
     let mut client_uncached = OnlineClient::new(params.clone(), prf.clone(), 123);
     let mut client_cached = OnlineClient::new(params, prf, 123);
+    let _ = client_cached.get_subset_for_hint(0);
 
     let (real_unc, dummy_unc, _h_unc) = client_uncached.build_network_queries(3).unwrap();
     let (real_cached, dummy_cached, _h_cached) = client_cached.build_network_queries(3).unwrap();

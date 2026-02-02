@@ -34,7 +34,7 @@ fn test_timing_summary_format() {
 
 **Step 2: Run test to verify it fails**
 
-Run: `cargo test tests/bench_timing_test.rs::test_timing_summary_format`
+Run: `cargo test test_timing_summary_format --test bench_timing_test`
 Expected: FAIL (module or type not found)
 
 **Step 3: Write minimal implementation**
@@ -81,7 +81,7 @@ pub mod bench_timing;
 
 **Step 4: Run test to verify it passes**
 
-Run: `cargo test tests/bench_timing_test.rs::test_timing_summary_format`
+Run: `cargo test test_timing_summary_format --test bench_timing_test`
 Expected: PASS
 
 **Step 5: Commit**
@@ -117,7 +117,7 @@ fn test_parse_args_timing_flags() {
 
 **Step 2: Run test to verify it fails**
 
-Run: `cargo test src/bin/rms24_client.rs::tests::test_parse_args_timing_flags`
+Run: `cargo test test_parse_args_timing_flags --bin rms24_client`
 Expected: FAIL (flags missing)
 
 **Step 3: Write minimal implementation**
@@ -142,7 +142,7 @@ Expected: FAIL (flags missing)
 
 **Step 4: Run test to verify it passes**
 
-Run: `cargo test src/bin/rms24_client.rs::tests::test_parse_args_timing_flags`
+Run: `cargo test test_parse_args_timing_flags --bin rms24_client`
 Expected: PASS
 
 **Step 5: Commit**
@@ -178,7 +178,7 @@ fn test_parse_args_timing_flags() {
 
 **Step 2: Run test to verify it fails**
 
-Run: `cargo test src/bin/rms24_server.rs::tests::test_parse_args_timing_flags`
+Run: `cargo test test_parse_args_timing_flags --bin rms24_server`
 Expected: FAIL (flags missing)
 
 **Step 3: Write minimal implementation**
@@ -202,7 +202,7 @@ Expected: FAIL (flags missing)
 
 **Step 4: Run test to verify it passes**
 
-Run: `cargo test src/bin/rms24_server.rs::tests::test_parse_args_timing_flags`
+Run: `cargo test test_parse_args_timing_flags --bin rms24_server`
 Expected: PASS
 
 **Step 5: Commit**
@@ -231,7 +231,7 @@ fn test_timing_helper_smoke() {
 
 **Step 2: Run test to verify it fails**
 
-Run: `cargo test tests/bench_timing_test.rs::test_timing_helper_smoke`
+Run: `cargo test test_timing_helper_smoke --test bench_timing_test`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -241,7 +241,7 @@ Expected: FAIL
 
 **Step 4: Run test to verify it passes**
 
-Run: `cargo test tests/bench_timing_test.rs::test_timing_helper_smoke`
+Run: `cargo test test_timing_helper_smoke --test bench_timing_test`
 Expected: PASS
 
 **Step 5: Commit**

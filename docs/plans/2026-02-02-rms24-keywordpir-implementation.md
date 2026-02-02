@@ -226,7 +226,11 @@ impl CuckooTable {
         let mut cur_bucket = positions[0];
         for kick in 0..self.cfg.max_kicks {
             let idx = cur_bucket * self.cfg.bucket_size + (kick % self.cfg.bucket_size);
-            let evicted = self.slots[idx].replace(cur_value).unwrap();
+            let evicted = self.slots[idx].replace(cur_value);
+            let evicted = match evicted {
+                Some(evicted) => evicted,
+                None => return Ok(()),
+            };
             cur_value = evicted;
             let evicted_positions = cuckoo_positions(&cur_value[..], &self.cfg);
             cur_bucket = evicted_positions[0];
@@ -247,7 +251,9 @@ impl CuckooTable {
             for i in 0..self.cfg.bucket_size {
                 let idx = bucket * self.cfg.bucket_size + i;
                 if let Some(value) = self.slots[idx] {
-                    return Some(value);
+                    if tag_matches_key(key, &value) {
+                        return Some(value);
+                    }
                 }
             }
         }
@@ -256,6 +262,7 @@ impl CuckooTable {
 }
 ```
 
+(Implement `tag_matches_key` by computing the tag from `key` and comparing to the tag bytes stored in `value`.)
 (If the evicted key derivation is needed, replace `cur_value[..]` with a stored key hash; refine in Task 3.)
 
 **Step 4: Run tests to verify they pass**

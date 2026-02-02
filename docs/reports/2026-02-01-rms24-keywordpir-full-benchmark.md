@@ -2,7 +2,7 @@
 
 ## Summary
 
-We benchmarked RMS24 and KeywordPIR against the full mainnet v3 dataset on hsiao. Both modes completed 1k and 10k query runs at 1 thread and max threads (64). Results show no meaningful scaling from 1 to 64 threads and very similar timings between RMS24 and KeywordPIR, suggesting a shared bottleneck (likely single-threaded portions, server-side compute, or RPC/IO).
+We benchmarked RMS24 and KeywordPIR against the full mainnet v3 dataset on hsiao. RMS24 completed 1k and 10k query runs at 1 and 4 threads, while KeywordPIR ran at 1 and 64 threads. Results show no meaningful scaling from 1 to 4 threads (RMS24) or 1 to 64 threads (KeywordPIR) and very similar timings between RMS24 and KeywordPIR, suggesting a shared bottleneck (likely single-threaded portions, server-side compute, or RPC/IO).
 
 ## Environment
 
@@ -28,7 +28,7 @@ We benchmarked RMS24 and KeywordPIR against the full mainnet v3 dataset on hsiao
 - Ran `scripts/bench_hsiao.sh` on hsiao.
 - Modes: `rms24`, `keywordpir`.
 - Queries: 1,000 and 10,000.
-- Threads: 1 and 64 (max cores).
+- Threads: RMS24 used 1 and 4; KeywordPIR used 1 and 64.
 - State cache enabled (precomputed hints).
 - Each run produced `summary.csv`, `server.jsonl`, `client.jsonl`, `sha256.txt`.
 
