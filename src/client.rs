@@ -493,6 +493,7 @@ impl OnlineClient {
             .iter()
             .copied()
             .map(|id| id as usize)
+            .filter(|hint_id| self.available_hints.contains(hint_id))
             .collect();
 
         if candidates.is_empty() {
@@ -1175,6 +1176,47 @@ mod tests {
 
         assert!(coverage[index as usize].contains(&(real_hint as u32)));
         assert_eq!(real_query.id, real_query.id);
+    }
+
+    #[test]
+    fn test_network_queries_with_coverage_filters_unavailable_hints() {
+        let params = Params::new(64, 4, 4);
+        let prf = Prf::random();
+        let mut client = OnlineClient::new(params.clone(), prf, 1);
+        let db = vec![7u8; (params.num_entries as usize) * params.entry_size];
+        client.generate_hints(&db).unwrap();
+        let coverage = client.build_coverage_index();
+
+        let mut target = None;
+        for index in 0..params.num_entries {
+            let block = params.block_of(index) as u32;
+            let offset = params.offset_in_block(index) as u32;
+            let covering: Vec<usize> = client
+                .available_hints
+                .iter()
+                .copied()
+                .filter(|&hint| client.hint_covers(hint, block, offset))
+                .collect();
+            if covering.len() >= 2 {
+                target = Some((index, covering));
+                break;
+            }
+        }
+        let (index, covering) = target.expect("expected index with >=2 covering hints");
+
+        let removed_hint = covering[0];
+        if let Some(pos) = client.available_hints.iter().position(|&h| h == removed_hint) {
+            client.available_hints.swap_remove(pos);
+        }
+
+        let mut coverage_override = coverage.clone();
+        coverage_override[index as usize] = vec![removed_hint as u32];
+
+        let (_real_query, _dummy_query, real_hint) =
+            client.build_network_queries_with_coverage(index, &coverage_override).unwrap();
+
+        assert_ne!(real_hint, removed_hint);
+        assert!(client.available_hints.contains(&real_hint));
     }
 
     #[test]
