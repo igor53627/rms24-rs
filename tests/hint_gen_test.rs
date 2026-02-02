@@ -97,8 +97,29 @@ fn test_deterministic_with_same_prf() {
     // Cutoffs should be identical
     assert_eq!(client1.hints.cutoffs, client2.hints.cutoffs);
     
-    // Note: Parities may differ due to random extra selection,
-    // but cutoffs are deterministic from PRF
+    // Parities are deterministic with the same PRF key.
+}
+
+#[test]
+fn test_parities_deterministic_with_same_prf() {
+    let params = Params::new(100, 40, 4);
+    let prf_key = [0x11u8; 32];
+    let db = vec![0x42u8; 100 * 40];
+
+    let mut client1 = Client::with_prf(params.clone(), rms24::prf::Prf::new(prf_key));
+    let mut client2 = Client::with_prf(params, rms24::prf::Prf::new(prf_key));
+
+    client1.generate_hints(&db);
+    client2.generate_hints(&db);
+
+    assert_eq!(client1.hints.cutoffs, client2.hints.cutoffs);
+    assert_eq!(client1.hints.extra_blocks, client2.hints.extra_blocks);
+    assert_eq!(client1.hints.extra_offsets, client2.hints.extra_offsets);
+    assert_eq!(client1.hints.parities, client2.hints.parities);
+    assert_eq!(
+        client1.hints.backup_parities_high,
+        client2.hints.backup_parities_high
+    );
 }
 
 #[test]
