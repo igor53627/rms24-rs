@@ -43,6 +43,14 @@ fn print_timing_summary(timing: &TimingCounters) {
     }
 }
 
+fn parse_run_config(bytes: &[u8]) -> io::Result<RunConfig> {
+    bincode::deserialize(bytes).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn parse_client_frame(bytes: &[u8]) -> io::Result<ClientFrame> {
+    bincode::deserialize(bytes).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
 fn handle_client(
     mut stream: TcpStream,
     server: Arc<Server<InMemoryDb>>,
@@ -51,7 +59,7 @@ fn handle_client(
     max_batch_queries: usize,
 ) -> io::Result<()> {
     let cfg_bytes = read_frame(&mut stream)?;
-    let cfg: RunConfig = bincode::deserialize(&cfg_bytes).unwrap();
+    let cfg: RunConfig = parse_run_config(&cfg_bytes)?;
     let max_batch = max_batch_queries.min(cfg.max_batch_queries);
 
     let mut timing = timing_enabled.then(|| TimingCounters::new(timing_every));
@@ -79,7 +87,7 @@ fn handle_client(
             }
         };
         let deserialize_start = Instant::now();
-        let frame: ClientFrame = bincode::deserialize(&msg).unwrap();
+        let frame: ClientFrame = parse_client_frame(&msg)?;
         record("deserialize", deserialize_start.elapsed().as_micros() as u64);
         let answer_start = Instant::now();
         let out = handle_client_frame(&server, frame, max_batch);
@@ -175,6 +183,18 @@ mod tests {
             "32",
         ]);
         assert_eq!(args.max_batch_queries, 32);
+    }
+
+    #[test]
+    fn test_parse_run_config_invalid_bytes() {
+        let err = parse_run_config(&[0xAA, 0xBB]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_parse_client_frame_invalid_bytes() {
+        let err = parse_client_frame(&[0xCC, 0xDD]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
