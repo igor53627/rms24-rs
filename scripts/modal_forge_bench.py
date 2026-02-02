@@ -267,7 +267,7 @@ def benchmark_single_gpu(
     subset_sizes_list = []
     current_start = 0
 
-    for h in range(num_hints):
+    for _ in range(num_hints):
         # Random subset of entries
         size = min(subset_size, num_entries)
         indices = torch.randint(0, num_entries, (size,), dtype=torch.int64)
@@ -280,7 +280,7 @@ def benchmark_single_gpu(
     subset_starts = torch.tensor(subset_starts, dtype=torch.int32, device=device)
     subset_sizes = torch.tensor(subset_sizes_list, dtype=torch.int32, device=device)
 
-    def benchmark_kernel(forward_fn, name):
+    def benchmark_kernel(forward_fn):
         # Warmup
         for _ in range(warmup):
             _ = forward_fn(entries, subset_indices, subset_starts, subset_sizes)
@@ -303,8 +303,8 @@ def benchmark_single_gpu(
     correct = torch.equal(forge_out, warp_out)
 
     # Benchmark
-    forge_ms = benchmark_kernel(cuda_module.forge_forward, "Forge")
-    warp_ms = benchmark_kernel(cuda_module.warp_forward, "Warp")
+    forge_ms = benchmark_kernel(cuda_module.forge_forward)
+    warp_ms = benchmark_kernel(cuda_module.warp_forward)
 
     return {
         "gpu_id": gpu_id,
@@ -390,7 +390,7 @@ def benchmark_full_db(
     subset_sizes_list = []
     current_start = 0
 
-    for h in range(num_hints):
+    for _ in range(num_hints):
         size = min(subset_size, num_entries)
         indices = torch.randint(0, num_entries, (size,), dtype=torch.int64)
         subset_indices_list.append(indices)
@@ -443,7 +443,7 @@ def main(
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    print(f"=== RMS24 FORGE KERNEL BENCHMARK ===")
+    print("=== RMS24 FORGE KERNEL BENCHMARK ===")
     print(f"GPUs: {num_gpus}x H200")
     print(f"Hints: {num_hints:,}")
     print(f"Entries: {num_entries:,}")

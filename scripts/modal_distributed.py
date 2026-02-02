@@ -33,7 +33,6 @@ def phase1_compute_subsets(
     db_path: str,
     total_hints: int,
     lambda_param: int,
-    entry_size: int = 40,
 ) -> str:
     """
     Phase 1: Compute all subsets on CPU, save to volume.

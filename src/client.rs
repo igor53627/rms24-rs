@@ -91,7 +91,7 @@ impl Client {
                     }
 
                     if hint_idx < num_reg && !high_blocks.is_empty() {
-                        let mut rng = rand::thread_rng();
+                        let mut rng = ChaCha8Rng::seed_from_u64(hint_idx as u64);
                         let idx = rng.gen_range(0..high_blocks.len());
                         subset.extra_block = high_blocks[idx].0;
                         subset.extra_offset = rng.gen_range(0..block_size as u32);
@@ -885,7 +885,7 @@ mod tests {
     #[test]
     fn test_generate_hints_basic() {
         let params = Params::new(100, 40, 2);
-        let mut client = Client::new(params);
+        let mut client = Client::with_prf(params, Prf::new([0u8; 32]));
         let db: Vec<u8> = vec![0u8; 100 * 40];
         client.generate_hints(&db);
         assert!(client.hints.cutoffs.iter().any(|&c| c > 0));
@@ -894,7 +894,7 @@ mod tests {
     #[test]
     fn test_generate_hints_nonzero_db() {
         let params = Params::new(64, 40, 2);
-        let mut client = Client::new(params);
+        let mut client = Client::with_prf(params, Prf::new([0u8; 32]));
         let mut db = vec![0u8; 64 * 40];
         for i in 0..64 {
             db[i * 40] = i as u8;
@@ -908,7 +908,7 @@ mod tests {
     #[test]
     fn test_hint_coverage() {
         let params = Params::new(100, 40, 8);
-        let mut client = Client::new(params.clone());
+        let mut client = Client::with_prf(params.clone(), Prf::new([0u8; 32]));
         let db = vec![0xFFu8; 100 * 40];
         client.generate_hints(&db);
         
@@ -918,9 +918,25 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_subsets_deterministic() {
+        let params = Params::new(100, 40, 2);
+        let prf = Prf::new([0u8; 32]);
+        let client = Client::with_prf(params, prf);
+
+        let subsets_a = client.generate_subsets_range(0, 10);
+        let subsets_b = client.generate_subsets_range(0, 10);
+
+        assert_eq!(subsets_a.len(), subsets_b.len());
+        for (a, b) in subsets_a.iter().zip(subsets_b.iter()) {
+            assert_eq!(a.extra_block, b.extra_block);
+            assert_eq!(a.extra_offset, b.extra_offset);
+        }
+    }
+
+    #[test]
     fn test_generate_subsets_basic() {
         let params = Params::new(100, 40, 2);
-        let client = Client::new(params.clone());
+        let client = Client::with_prf(params.clone(), Prf::new([0u8; 32]));
         let subsets = client.generate_subsets();
 
         let num_total = (params.num_reg_hints + params.num_backup_hints) as usize;

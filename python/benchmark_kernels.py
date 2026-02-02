@@ -41,22 +41,23 @@ def get_minimal_kernel():
 
 def benchmark_kernel(model, entries, indices, mask, warmup=3, iterations=10):
     """Benchmark a kernel, return median time in ms."""
-    # Warmup
-    for _ in range(warmup):
-        _ = model(entries, indices, mask)
-    torch.cuda.synchronize()
-    
-    times = []
-    for _ in range(iterations):
+    with torch.inference_mode():
+        # Warmup
+        for _ in range(warmup):
+            _ = model(entries, indices, mask)
         torch.cuda.synchronize()
-        start = time.perf_counter()
-        _ = model(entries, indices, mask)
-        torch.cuda.synchronize()
-        end = time.perf_counter()
-        times.append((end - start) * 1000)
-    
-    times.sort()
-    return times[len(times) // 2]  # median
+
+        times = []
+        for _ in range(iterations):
+            torch.cuda.synchronize()
+            start = time.perf_counter()
+            _ = model(entries, indices, mask)
+            torch.cuda.synchronize()
+            end = time.perf_counter()
+            times.append((end - start) * 1000)
+
+        times.sort()
+        return times[len(times) // 2]  # median
 
 
 def verify_correctness(model, ref_model, entries, indices, mask):
