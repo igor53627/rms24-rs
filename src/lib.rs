@@ -16,6 +16,8 @@ pub mod online_framing;
 pub mod online_transport;
 pub mod online_server;
 pub mod online_client;
+pub mod bench_proto;
+pub mod bench_framing;
 
 #[cfg(feature = "cuda")]
 pub mod gpu;
