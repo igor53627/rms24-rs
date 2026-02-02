@@ -21,6 +21,8 @@
 Add to `src/bin/rms24_keywordpir_build.rs` under `#[cfg(test)] mod tests`:
 
 ```rust
+    use rms24::keyword_pir::cuckoo_positions;
+
     fn entry_record_for_key(key: Vec<u8>) -> EntryRecord {
         let tag = tag_for_key(&key).expect("valid key length");
         let mut entry = [0u8; ENTRY_SIZE];
@@ -37,11 +39,43 @@ Add to `src/bin/rms24_keywordpir_build.rs` under `#[cfg(test)] mod tests`:
         }
     }
 
+    fn hash_key_for_test(key: &[u8]) -> [u8; 32] {
+        use sha3::{Digest, Sha3_256};
+        let mut hasher = Sha3_256::new();
+        hasher.update(key);
+        let digest = hasher.finalize();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&digest[..]);
+        out
+    }
+
+    fn find_keys_with_distinct_buckets(seed: u64) -> (Vec<u8>, Vec<u8>) {
+        let cfg = CuckooConfig::new(2, 1, 1, 1, seed);
+        for a in 0u8..=255 {
+            let key_a = vec![a; 20];
+            let hash_a = hash_key_for_test(&key_a);
+            let bucket_a = cuckoo_positions(&hash_a, &cfg)[0];
+            for b in 0u8..=255 {
+                if b == a {
+                    continue;
+                }
+                let key_b = vec![b; 20];
+                let hash_b = hash_key_for_test(&key_b);
+                let bucket_b = cuckoo_positions(&hash_b, &cfg)[0];
+                if bucket_a != bucket_b {
+                    return (key_a, key_b);
+                }
+            }
+        }
+        panic!("no keys found with distinct buckets");
+    }
+
     #[test]
     fn test_build_cuckoo_retries_and_bumps_seed() {
+        let (key_a, key_b) = find_keys_with_distinct_buckets(8);
         let entries = vec![
-            entry_record_for_key(vec![0x11u8; 20]),
-            entry_record_for_key(vec![0x22u8; 20]),
+            entry_record_for_key(key_a),
+            entry_record_for_key(key_b),
         ];
         let base = CuckooConfig::new(1, 1, 1, 1, 7);
         let (table, cfg) = build_cuckoo_with_retries(&entries, &base, 2.0, 2, true).unwrap();
@@ -54,10 +88,8 @@ Add to `src/bin/rms24_keywordpir_build.rs` under `#[cfg(test)] mod tests`:
 
     #[test]
     fn test_build_cuckoo_retries_without_seed_bump() {
-        let entries = vec![
-            entry_record_for_key(vec![0x33u8; 20]),
-            entry_record_for_key(vec![0x44u8; 20]),
-        ];
+        let (key_a, key_b) = find_keys_with_distinct_buckets(9);
+        let entries = vec![entry_record_for_key(key_a), entry_record_for_key(key_b)];
         let base = CuckooConfig::new(1, 1, 1, 1, 9);
         let (_, cfg) = build_cuckoo_with_retries(&entries, &base, 2.0, 2, false).unwrap();
         assert!(cfg.num_buckets >= 2);
