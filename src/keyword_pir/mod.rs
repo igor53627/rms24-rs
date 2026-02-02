@@ -1,4 +1,7 @@
+use crate::messages::{Query, Reply};
 use crate::schema40::{Tag, ENTRY_SIZE, TAG_SIZE};
+use crate::OnlineClient;
+use std::collections::HashSet;
 use std::hash::Hash;
 
 impl Hash for Tag {
@@ -209,9 +212,209 @@ impl CuckooTable {
     }
 }
 
+const COLLISION_ENTRY_SIZE: usize = 72;
+
+#[derive(Clone, Debug)]
+pub struct KeywordPirParams {
+    pub cfg: CuckooConfig,
+    pub entry_size: usize,
+}
+
+pub struct KeywordPirClient {
+    params: KeywordPirParams,
+    collision_tags: HashSet<Tag>,
+    collision_table: Option<Vec<u8>>,
+}
+
+impl KeywordPirClient {
+    pub fn new(params: KeywordPirParams) -> Self {
+        Self {
+            params,
+            collision_tags: HashSet::new(),
+            collision_table: None,
+        }
+    }
+
+    pub fn set_collision_tags(&mut self, tags: Vec<Tag>) {
+        self.collision_tags = tags.into_iter().collect();
+    }
+
+    pub fn set_collision_table(&mut self, table: Vec<u8>) {
+        self.collision_table = Some(table);
+    }
+
+    pub fn positions_for_key(&self, key: &[u8]) -> Vec<usize> {
+        let key_hash = hash_key(key);
+        let buckets = cuckoo_positions(&key_hash, &self.params.cfg);
+        let mut positions = Vec::with_capacity(buckets.len() * self.params.cfg.bucket_size);
+        for bucket in buckets {
+            for i in 0..self.params.cfg.bucket_size {
+                positions.push(bucket * self.params.cfg.bucket_size + i);
+            }
+        }
+        positions
+    }
+
+    pub fn query_local(&self, key: &[u8], table: &CuckooTable) -> Result<[u8; 40], String> {
+        self.ensure_entry_size()?;
+        let expected_tag = self.expected_tag(key)?;
+        if self.collision_tags.contains(&expected_tag) {
+            let collision_table = self
+                .collision_table
+                .as_ref()
+                .ok_or_else(|| "collision table missing".to_string())?;
+            return self.query_collision(key, collision_table);
+        }
+
+        let key_hash = hash_key(key);
+        let positions = self.positions_for_key(key);
+        for pos in positions.iter().copied() {
+            if let Some(slot) = table.slots.get(pos).and_then(|slot| slot.as_ref()) {
+                if slot.key_hash == key_hash {
+                    if self.entry_tag_matches(key, &slot.value)? {
+                        return Ok(slot.value);
+                    }
+                }
+            }
+        }
+
+        for pos in positions {
+            if let Some(slot) = table.slots.get(pos).and_then(|slot| slot.as_ref()) {
+                if self.entry_tag_matches(key, &slot.value)? {
+                    return Ok(slot.value);
+                }
+            }
+        }
+
+        Err("no matching entry found".into())
+    }
+
+    pub fn query_network(
+        &mut self,
+        key: &[u8],
+        online: &mut OnlineClient,
+        mut sender: impl FnMut(Query) -> Reply,
+    ) -> Result<[u8; 40], String> {
+        self.ensure_entry_size()?;
+        if online.params.entry_size != self.params.entry_size {
+            return Err("online entry size mismatch".into());
+        }
+        let expected_tag = self.expected_tag(key)?;
+        if self.collision_tags.contains(&expected_tag) {
+            let collision_table = self
+                .collision_table
+                .as_ref()
+                .ok_or_else(|| "collision table missing".to_string())?;
+            return self.query_collision(key, collision_table);
+        }
+
+        let positions = self.positions_for_key(key);
+        for pos in positions {
+            let (real_query, dummy_query, real_hint) =
+                online.build_network_queries(pos as u64).map_err(|e| e.to_string())?;
+            let real_reply = sender(Query {
+                id: real_query.id,
+                subset: real_query.subset,
+            });
+            let _ = sender(Query {
+                id: dummy_query.id,
+                subset: dummy_query.subset,
+            });
+
+            let entry = online
+                .consume_network_reply(pos as u64, real_hint, real_reply.parity)
+                .map_err(|e| e.to_string())?;
+            let entry: [u8; ENTRY_SIZE] =
+                entry.try_into().map_err(|_| "entry size mismatch".to_string())?;
+
+            if self.entry_tag_matches(key, &entry)? {
+                return Ok(entry);
+            }
+        }
+
+        Err("no matching entry found".into())
+    }
+
+    fn query_collision(&self, key: &[u8], collision_table: &[u8]) -> Result<[u8; 40], String> {
+        self.ensure_entry_size()?;
+        if collision_table.len() % COLLISION_ENTRY_SIZE != 0 {
+            return Err("collision table size mismatch".into());
+        }
+        if self.params.cfg.bucket_size == 0 {
+            return Err("bucket_size must be >0".into());
+        }
+        let slots = collision_table.len() / COLLISION_ENTRY_SIZE;
+        if slots % self.params.cfg.bucket_size != 0 {
+            return Err("collision table bucket alignment mismatch".into());
+        }
+        let num_buckets = slots / self.params.cfg.bucket_size;
+        if num_buckets == 0 {
+            return Err("collision num_buckets must be >0".into());
+        }
+        let collision_cfg = CuckooConfig::new(
+            num_buckets,
+            self.params.cfg.bucket_size,
+            self.params.cfg.num_hashes,
+            self.params.cfg.max_kicks,
+            self.params.cfg.seed,
+        );
+        let key_hash = hash_key(key);
+        let buckets = cuckoo_positions(&key_hash, &collision_cfg);
+        for bucket in buckets {
+            for i in 0..self.params.cfg.bucket_size {
+                let idx = bucket * self.params.cfg.bucket_size + i;
+                if idx >= slots {
+                    continue;
+                }
+                let offset = idx * COLLISION_ENTRY_SIZE;
+                let slot_hash: [u8; 32] = collision_table[offset..offset + 32]
+                    .try_into()
+                    .map_err(|_| "collision entry truncated".to_string())?;
+                if slot_hash == key_hash {
+                    let mut entry = [0u8; ENTRY_SIZE];
+                    entry.copy_from_slice(
+                        &collision_table[offset + 32..offset + COLLISION_ENTRY_SIZE],
+                    );
+                    return Ok(entry);
+                }
+            }
+        }
+        Err("collision entry not found".into())
+    }
+
+    fn expected_tag(&self, key: &[u8]) -> Result<Tag, String> {
+        tag_for_key(key).ok_or_else(|| "invalid key length for tag".to_string())
+    }
+
+    fn entry_tag_matches(&self, key: &[u8], entry: &[u8; ENTRY_SIZE]) -> Result<bool, String> {
+        let expected = self.expected_tag(key)?;
+        let actual = tag_from_entry(key.len(), entry)
+            .ok_or_else(|| "invalid key length for entry tag".to_string())?;
+        Ok(expected == actual)
+    }
+
+    fn ensure_entry_size(&self) -> Result<(), String> {
+        if self.params.entry_size != ENTRY_SIZE {
+            return Err("entry_size mismatch".into());
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry_with_tag_for_key(key: &[u8]) -> [u8; ENTRY_SIZE] {
+        let mut entry = [0u8; ENTRY_SIZE];
+        let tag = tag_for_key(key).expect("valid key length");
+        match key.len() {
+            20 => entry[24..32].copy_from_slice(tag.as_bytes()),
+            52 => entry[32..40].copy_from_slice(tag.as_bytes()),
+            _ => panic!("unsupported key length"),
+        }
+        entry
+    }
 
     #[test]
     fn test_parse_mapping_record_account() {
@@ -260,5 +463,63 @@ mod tests {
         table.insert(&key, value).unwrap();
         let got = table.find_candidate(&key).unwrap();
         assert_eq!(got, value);
+    }
+
+    #[test]
+    fn test_keywordpir_query_returns_matching_tag() {
+        let cfg = CuckooConfig::new(8, 2, 2, 32, 1);
+        let key = vec![0x11u8; 20];
+        let entry = entry_with_tag_for_key(&key);
+        let mut table = CuckooTable::new(cfg.clone());
+        table.insert(&key, entry).unwrap();
+        let params = KeywordPirParams { cfg, entry_size: 40 };
+        let client = KeywordPirClient::new(params);
+        let got = client.query_local(&key, &table).unwrap();
+        assert_eq!(got, entry);
+    }
+
+    #[test]
+    fn test_keywordpir_query_requires_tag_match() {
+        let cfg = CuckooConfig::new(8, 2, 2, 32, 1);
+        let key = vec![0x11u8; 20];
+        let mut entry = entry_with_tag_for_key(&key);
+        entry[24] ^= 0xFF;
+        let mut table = CuckooTable::new(cfg.clone());
+        table.insert(&key, entry).unwrap();
+        let params = KeywordPirParams { cfg, entry_size: 40 };
+        let client = KeywordPirClient::new(params);
+        assert!(client.query_local(&key, &table).is_err());
+    }
+
+    #[test]
+    fn test_keywordpir_query_uses_collision_table() {
+        let cfg = CuckooConfig::new(8, 2, 2, 32, 1);
+        let collision_cfg = CuckooConfig::new(4, 2, 2, 32, 1);
+        let key = vec![0x11u8; 20];
+        let entry = entry_with_tag_for_key(&key);
+        let mut collision_table = CuckooTable::new(collision_cfg);
+        collision_table.insert(&key, entry).unwrap();
+
+        let mut client = KeywordPirClient::new(KeywordPirParams { cfg: cfg.clone(), entry_size: 40 });
+        let tag = tag_for_key(&key).unwrap();
+        client.set_collision_tags(vec![tag]);
+        client.set_collision_table(collision_table.to_collision_bytes());
+
+        let table = CuckooTable::new(cfg);
+        let got = client.query_local(&key, &table).unwrap();
+        assert_eq!(got, entry);
+    }
+
+    #[test]
+    fn test_keywordpir_query_collision_empty_table_errors() {
+        let cfg = CuckooConfig::new(8, 2, 2, 32, 1);
+        let key = vec![0x11u8; 20];
+        let mut client = KeywordPirClient::new(KeywordPirParams { cfg: cfg.clone(), entry_size: 40 });
+        let tag = tag_for_key(&key).unwrap();
+        client.set_collision_tags(vec![tag]);
+        client.set_collision_table(Vec::new());
+
+        let table = CuckooTable::new(cfg);
+        assert!(client.query_local(&key, &table).is_err());
     }
 }
