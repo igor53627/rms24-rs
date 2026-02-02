@@ -312,6 +312,8 @@ pub struct OnlineClient {
     pub hints: HintState,
     pub hint_prf_ids: Vec<u32>,
     pub available_hints: Vec<usize>,
+    #[serde(skip)]
+    subset_cache: Vec<Option<Vec<(u32, u32)>>>,
     pub rng: ChaCha20Rng,
     pub next_query_id: u64,
 }
@@ -326,12 +328,14 @@ impl OnlineClient {
         let available_hints = (0..params.num_reg_hints as usize).collect();
         let total = (params.num_reg_hints + params.num_backup_hints) as usize;
         let hint_prf_ids = (0..total).map(|id| id as u32).collect();
+        let subset_cache = vec![None; total];
         Self {
             params,
             prf,
             hints,
             hint_prf_ids,
             available_hints,
+            subset_cache,
             rng: ChaCha20Rng::seed_from_u64(seed),
             next_query_id: 0,
         }
@@ -342,6 +346,7 @@ impl OnlineClient {
         offline.generate_hints(db);
         self.hints = offline.hints;
         self.available_hints = (0..self.params.num_reg_hints as usize).collect();
+        self.reset_subset_cache();
         Ok(())
     }
 
@@ -353,10 +358,11 @@ impl OnlineClient {
 
     pub fn deserialize_state(bytes: &[u8]) -> Result<Self, ClientError> {
         let options = Self::bincode_options().with_limit(bytes.len() as u64);
-        let client: Self = options
+        let mut client: Self = options
             .deserialize(bytes)
             .map_err(|e| ClientError::SerializationError(e.to_string()))?;
         client.validate_state()?;
+        client.reset_subset_cache();
         Ok(client)
     }
 
@@ -364,6 +370,28 @@ impl OnlineClient {
         let id = self.next_query_id;
         self.next_query_id += 1;
         id
+    }
+
+    fn ensure_subset_cache(&mut self) {
+        let total = (self.params.num_reg_hints + self.params.num_backup_hints) as usize;
+        if self.subset_cache.len() != total {
+            self.subset_cache = vec![None; total];
+        }
+    }
+
+    fn reset_subset_cache(&mut self) {
+        let total = (self.params.num_reg_hints + self.params.num_backup_hints) as usize;
+        self.subset_cache = vec![None; total];
+    }
+
+    fn get_subset_for_hint(&mut self, hint_id: usize) -> Vec<(u32, u32)> {
+        self.ensure_subset_cache();
+        if let Some(ref cached) = self.subset_cache[hint_id] {
+            return cached.clone();
+        }
+        let subset = self.build_subset_for_hint(hint_id);
+        self.subset_cache[hint_id] = Some(subset.clone());
+        subset
     }
 
     fn hint_covers(&self, hint_id: usize, target_block: u32, target_offset: u32) -> bool {
@@ -409,7 +437,7 @@ impl OnlineClient {
         let id = self.next_query_id();
         let candidate_idx = self.rng.gen_range(0..candidates.len());
         let real_hint = candidates.swap_remove(candidate_idx);
-        let mut real_subset = self.build_subset_for_hint(real_hint);
+        let mut real_subset = self.get_subset_for_hint(real_hint);
         if let Some(pos) = real_subset
             .iter()
             .position(|(block, offset)| *block == target_block && *offset == target_offset)
@@ -418,7 +446,7 @@ impl OnlineClient {
         }
 
         let dummy_hint = self.available_hints[self.rng.gen_range(0..self.available_hints.len())];
-        let dummy_subset = self.build_subset_for_hint(dummy_hint);
+        let dummy_subset = self.get_subset_for_hint(dummy_hint);
 
         let real_query = crate::messages::Query {
             id,
@@ -473,7 +501,7 @@ impl OnlineClient {
 
         let candidate_idx = self.rng.gen_range(0..candidates.len());
         let real_hint = candidates.swap_remove(candidate_idx);
-        let mut real_subset = self.build_subset_for_hint(real_hint);
+        let mut real_subset = self.get_subset_for_hint(real_hint);
         if let Some(pos) = real_subset
             .iter()
             .position(|(block, offset)| *block == target_block && *offset == target_offset)
@@ -482,7 +510,7 @@ impl OnlineClient {
         }
 
         let dummy_hint = self.available_hints[self.rng.gen_range(0..self.available_hints.len())];
-        let dummy_subset = self.build_subset_for_hint(dummy_hint);
+        let dummy_subset = self.get_subset_for_hint(dummy_hint);
 
         let id = self.next_query_id();
         let real_query = crate::messages::Query {
@@ -751,8 +779,14 @@ impl OnlineClient {
         self.hints.extra_offsets[consumed_hint] = target_offset;
         self.hints.parities[consumed_hint] = replenish.parity;
         self.hint_prf_ids[consumed_hint] = backup_prf_id;
+        if consumed_hint < self.subset_cache.len() {
+            self.subset_cache[consumed_hint] = None;
+        }
 
         self.hints.cutoffs[backup_hint] = 0;
+        if backup_hint < self.subset_cache.len() {
+            self.subset_cache[backup_hint] = None;
+        }
         let next = if backup_hint + 1 < total {
             backup_hint + 1
         } else {
@@ -938,6 +972,70 @@ mod tests {
     }
 
     #[test]
+    fn test_subset_cache_matches_uncached() {
+        let params = Params::new(64, 4, 2);
+        let prf = Prf::new([7u8; 32]);
+        let mut client = OnlineClient::new(params, prf, 1);
+
+        let hint_id = 0usize;
+        let uncached = client.build_subset_for_hint(hint_id);
+        let cached = client.get_subset_for_hint(hint_id);
+
+        assert_eq!(uncached, cached);
+    }
+
+    #[test]
+    fn test_subset_cache_reuse() {
+        let params = Params::new(64, 4, 2);
+        let prf = Prf::new([9u8; 32]);
+        let mut client = OnlineClient::new(params, prf, 1);
+
+        let hint_id = 0usize;
+        let _ = client.get_subset_for_hint(hint_id);
+        let first = client.subset_cache[hint_id].clone();
+        let _ = client.get_subset_for_hint(hint_id);
+        let second = client.subset_cache[hint_id].clone();
+
+        assert_eq!(first, second);
+        assert!(first.is_some());
+    }
+
+    #[test]
+    fn test_query_bytes_equivalent_with_cache() {
+        let params = Params::new(64, 4, 2);
+        let prf = Prf::new([5u8; 32]);
+        let mut client_uncached = OnlineClient::new(params.clone(), prf.clone(), 123);
+        let mut client_cached = OnlineClient::new(params.clone(), prf, 123);
+
+        let db = vec![7u8; (client_uncached.params.num_entries as usize) * client_uncached.params.entry_size];
+        client_uncached.generate_hints(&db).unwrap();
+        client_cached.generate_hints(&db).unwrap();
+
+        client_cached.get_subset_for_hint(0);
+
+        let mut index = None;
+        for &hint_id in &client_uncached.available_hints {
+            let subset = client_uncached.build_subset_for_hint(hint_id);
+            if let Some((block, offset)) = subset.first().copied() {
+                let candidate =
+                    (block as u64) * client_uncached.params.block_size + (offset as u64);
+                if candidate < client_uncached.params.num_entries {
+                    index = Some(candidate);
+                    break;
+                }
+            }
+        }
+        let index = index.expect("expected at least one hint to cover an entry");
+
+        let (real_unc, dummy_unc, _h_unc) = client_uncached.build_network_queries(index).unwrap();
+        let (real_cached, dummy_cached, _h_cached) =
+            client_cached.build_network_queries(index).unwrap();
+
+        assert_eq!(real_unc, real_cached);
+        assert_eq!(dummy_unc, dummy_cached);
+    }
+
+    #[test]
     fn test_client_state_invalid_available_hints() {
         let params = Params::new(16, 40, 2);
         let mut client = OnlineClient::new(params, Prf::random(), 1234u64);
@@ -1051,7 +1149,11 @@ mod tests {
         client.generate_hints(&db).unwrap();
         let coverage = client.build_coverage_index();
 
-        let index = 3u64;
+        let index = coverage
+            .iter()
+            .position(|hints| !hints.is_empty())
+            .map(|idx| idx as u64)
+            .expect("expected at least one covered index");
         let (real_query, _dummy_query, real_hint) =
             client.build_network_queries_with_coverage(index, &coverage).unwrap();
 

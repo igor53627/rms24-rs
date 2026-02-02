@@ -9,7 +9,7 @@ RMS24-RS is a Rust implementation of the RMS24 single-server PIR protocol with o
 - `src/params.rs`: Parameter derivation (block size, number of hints).
 - `src/prf.rs`: ChaCha12-based PRF for subset selection and offsets.
 - `src/hints.rs`: Hint state, subset representation, and utilities.
-- `src/client.rs`: Offline hint generation and subset precomputation.
+- `src/client.rs`: Offline hint generation and online query construction, including an in-memory per-hint subset cache for faster query building.
 - `src/online.rs`: Online protocol types (config, queries, replies, errors).
 - `src/online_framing.rs`: Length-prefixed framing helpers for byte streams.
 - `src/online_transport.rs`: Transport abstraction and framed I/O implementation.
@@ -30,3 +30,8 @@ The online protocol exposes a single logical entrypoint with a mode switch (RMS2
 ## Data Model
 
 Entries are fixed-size byte records. The default schema uses 40-byte entries: 32-byte value + 8-byte tag.
+
+## Runtime Notes
+
+- Online clients maintain a per-hint subset cache to avoid recomputing subset scans on each query. The cache is invalidated on hint replenishment and is not serialized.
+- Coverage index mode uses static hints (no consume/replenish) to keep index validity.

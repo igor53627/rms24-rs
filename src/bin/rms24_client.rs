@@ -55,6 +55,16 @@ fn params_match(a: &Params, b: &Params) -> bool {
         && a.security_param == b.security_param
 }
 
+fn coverage_enabled(args: &Args) -> bool {
+    if args.coverage_index {
+        return true;
+    }
+    match std::env::var("RMS24_COVERAGE_INDEX") {
+        Ok(val) => matches!(val.to_ascii_lowercase().as_str(), "1" | "true" | "yes"),
+        Err(_) => false,
+    }
+}
+
 fn load_cached_client(
     path: &Path,
     params: &Params,
@@ -209,7 +219,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let params = Params::new(num_entries as u64, args.entry_size, args.lambda);
     let state_path = args.state.as_deref().map(Path::new);
     let mut client = load_or_generate_client(&db, params.clone(), args.seed, state_path)?;
-    let coverage = if args.coverage_index {
+    let coverage_enabled = coverage_enabled(&args);
+    let coverage = if coverage_enabled {
         Some(client.build_coverage_index())
     } else {
         None
@@ -328,6 +339,14 @@ mod tests {
         ]);
         assert_eq!(args.query_count, 1000);
         assert!(args.coverage_index);
+    }
+
+    #[test]
+    fn test_coverage_env_enables_index() {
+        std::env::set_var("RMS24_COVERAGE_INDEX", "1");
+        let args = Args::parse_from(["rms24-client", "--db", "db.bin"]);
+        assert!(coverage_enabled(&args));
+        std::env::remove_var("RMS24_COVERAGE_INDEX");
     }
 
     #[test]
