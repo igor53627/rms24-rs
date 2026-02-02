@@ -38,7 +38,7 @@ The online protocol exposes a single logical entrypoint with a mode switch (RMS2
 - `keywordpir-collision-tags.bin` (collision tag list)
 - `keywordpir-metadata.json` (cuckoo + collision metadata)
 
-The benchmark client loads the metadata and mapping files, derives cuckoo candidate indices per key, and issues RMS24 index PIR queries to the keywordpir DB while preserving batching semantics. If collision tags are provided, the benchmark client requires a collision server address (`--collision-server`).
+The benchmark client loads the metadata and mapping files, derives cuckoo candidate indices per key, and issues RMS24 index PIR queries to the keywordpir DB while preserving batching semantics. In keywordpir mode, each keyword expands into `num_hashes * bucket_size` candidate positions, so `--query-count` counts keywords rather than total RMS24 queries. If collision tags are provided, the benchmark client requires a collision server address (`--collision-server`) and reads `keywordpir-collision-db.bin` from the metadata directory to build collision-table hints.
 
 ## Data Model
 

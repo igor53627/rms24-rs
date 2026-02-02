@@ -4,6 +4,11 @@ use crate::OnlineClient;
 use std::collections::HashSet;
 use std::hash::Hash;
 
+// schema40 layout: account tag after balance(16) + nonce(4) + code_id(4)
+const ACCOUNT_TAG_OFFSET: usize = 24;
+// schema40 layout: storage tag after value(32)
+const STORAGE_TAG_OFFSET: usize = 32;
+
 impl Hash for Tag {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
@@ -48,12 +53,12 @@ pub fn tag_from_entry(key_len: usize, entry: &[u8; ENTRY_SIZE]) -> Option<Tag> {
     match key_len {
         20 => {
             let mut tag = [0u8; TAG_SIZE];
-            tag.copy_from_slice(&entry[24..32]);
+            tag.copy_from_slice(&entry[ACCOUNT_TAG_OFFSET..ACCOUNT_TAG_OFFSET + TAG_SIZE]);
             Some(Tag(tag))
         }
         52 => {
             let mut tag = [0u8; TAG_SIZE];
-            tag.copy_from_slice(&entry[32..40]);
+            tag.copy_from_slice(&entry[STORAGE_TAG_OFFSET..STORAGE_TAG_OFFSET + TAG_SIZE]);
             Some(Tag(tag))
         }
         _ => None,
@@ -159,14 +164,18 @@ impl CuckooTable {
             };
             cur_slot = evicted;
             let evicted_positions = cuckoo_positions(&cur_slot.key_hash, &self.cfg);
-            cur_bucket = evicted_positions[0];
-            for i in 0..self.cfg.bucket_size {
-                let cand = cur_bucket * self.cfg.bucket_size + i;
-                if self.slots[cand].is_none() {
-                    self.slots[cand] = Some(cur_slot);
-                    return Ok(());
+            let start = kick % evicted_positions.len();
+            for offset in 0..evicted_positions.len() {
+                let bucket = evicted_positions[(start + offset) % evicted_positions.len()];
+                for i in 0..self.cfg.bucket_size {
+                    let cand = bucket * self.cfg.bucket_size + i;
+                    if self.slots[cand].is_none() {
+                        self.slots[cand] = Some(cur_slot);
+                        return Ok(());
+                    }
                 }
             }
+            cur_bucket = evicted_positions[start];
         }
         Err("cuckoo insertion failed".into())
     }
@@ -199,7 +208,6 @@ impl CuckooTable {
     }
 
     pub fn to_collision_bytes(&self) -> Vec<u8> {
-        const COLLISION_ENTRY_SIZE: usize = 72;
         let mut out = vec![0u8; self.slots.len() * COLLISION_ENTRY_SIZE];
         for (idx, slot) in self.slots.iter().enumerate() {
             if let Some(slot) = slot {
@@ -409,8 +417,8 @@ mod tests {
         let mut entry = [0u8; ENTRY_SIZE];
         let tag = tag_for_key(key).expect("valid key length");
         match key.len() {
-            20 => entry[24..32].copy_from_slice(tag.as_bytes()),
-            52 => entry[32..40].copy_from_slice(tag.as_bytes()),
+            20 => entry[ACCOUNT_TAG_OFFSET..ACCOUNT_TAG_OFFSET + TAG_SIZE].copy_from_slice(tag.as_bytes()),
+            52 => entry[STORAGE_TAG_OFFSET..STORAGE_TAG_OFFSET + TAG_SIZE].copy_from_slice(tag.as_bytes()),
             _ => panic!("unsupported key length"),
         }
         entry

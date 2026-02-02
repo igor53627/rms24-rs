@@ -3,18 +3,24 @@ use rms24::bench_framing::{read_frame, write_frame};
 use rms24::bench_proto::{BatchRequest, ClientFrame, Mode, Query, Reply, RunConfig, ServerFrame};
 use rms24::bench_timing::TimingCounters;
 use rms24::client::OnlineClient;
-use rms24::keyword_pir::{parse_mapping_record, CuckooConfig, KeywordPirClient, KeywordPirParams};
+use rms24::keyword_pir::{
+    parse_mapping_record, tag_for_key, CuckooConfig, KeywordPirClient, KeywordPirParams,
+};
 use rms24::params::Params;
 use rms24::prf::Prf;
 use rms24::schema40::{Tag, TAG_SIZE};
+use serde::Deserialize;
 use sha3::{Digest, Sha3_256};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const DEFAULT_TCP_TIMEOUT_SECS: u64 = 60;
+const ACCOUNT_KEY_SIZE: usize = 20;
+const STORAGE_KEY_SIZE: usize = 52;
 
 #[derive(Parser)]
 struct Args {
@@ -89,6 +95,7 @@ fn params_from_db(
     Ok((Params::new(num_entries as u64, entry_size, lambda), num_entries))
 }
 
+#[derive(Deserialize)]
 struct KeywordPirMetadata {
     entry_size: usize,
     num_entries: usize,
@@ -105,90 +112,8 @@ fn parse_keywordpir_metadata(
     path: &Path,
 ) -> Result<KeywordPirMetadata, Box<dyn std::error::Error>> {
     let text = std::fs::read_to_string(path)?;
-    let mut entry_size = None;
-    let mut num_entries = None;
-    let mut bucket_size = None;
-    let mut num_buckets = None;
-    let mut num_hashes = None;
-    let mut max_kicks = None;
-    let mut seed = None;
-    let mut collision_entry_size = None;
-    let mut collision_count = None;
-
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        if !line.starts_with('"') {
-            continue;
-        }
-        let line = line.trim_end_matches(',');
-        let mut parts = line.splitn(2, ':');
-        let key = parts
-            .next()
-            .ok_or("keywordpir metadata missing key")?
-            .trim()
-            .trim_matches('"');
-        let value_str = parts
-            .next()
-            .ok_or("keywordpir metadata missing value")?
-            .trim()
-            .trim_end_matches(',');
-        let value: u64 = value_str
-            .parse()
-            .map_err(|_| format!("keywordpir metadata invalid value for {key}"))?;
-        match key {
-            "entry_size" => entry_size = Some(value),
-            "num_entries" => num_entries = Some(value),
-            "bucket_size" => bucket_size = Some(value),
-            "num_buckets" => num_buckets = Some(value),
-            "num_hashes" => num_hashes = Some(value),
-            "max_kicks" => max_kicks = Some(value),
-            "seed" => seed = Some(value),
-            "collision_entry_size" => collision_entry_size = Some(value),
-            "collision_count" => collision_count = Some(value),
-            _ => {}
-        }
-    }
-
-    let entry_size = entry_size.ok_or("keywordpir metadata missing entry_size")?;
-    let num_entries = num_entries.ok_or("keywordpir metadata missing num_entries")?;
-    let bucket_size = bucket_size.ok_or("keywordpir metadata missing bucket_size")?;
-    let num_buckets = num_buckets.ok_or("keywordpir metadata missing num_buckets")?;
-    let num_hashes = num_hashes.ok_or("keywordpir metadata missing num_hashes")?;
-    let max_kicks = max_kicks.ok_or("keywordpir metadata missing max_kicks")?;
-    let seed = seed.ok_or("keywordpir metadata missing seed")?;
-    let collision_entry_size =
-        collision_entry_size.ok_or("keywordpir metadata missing collision_entry_size")?;
-    let collision_count =
-        collision_count.ok_or("keywordpir metadata missing collision_count")?;
-
-    let entry_size = usize::try_from(entry_size)
-        .map_err(|_| "keywordpir metadata entry_size too large")?;
-    let num_entries = usize::try_from(num_entries)
-        .map_err(|_| "keywordpir metadata num_entries too large")?;
-    let bucket_size = usize::try_from(bucket_size)
-        .map_err(|_| "keywordpir metadata bucket_size too large")?;
-    let num_buckets = usize::try_from(num_buckets)
-        .map_err(|_| "keywordpir metadata num_buckets too large")?;
-    let num_hashes = usize::try_from(num_hashes)
-        .map_err(|_| "keywordpir metadata num_hashes too large")?;
-    let max_kicks = usize::try_from(max_kicks)
-        .map_err(|_| "keywordpir metadata max_kicks too large")?;
-    let collision_entry_size = usize::try_from(collision_entry_size)
-        .map_err(|_| "keywordpir metadata collision_entry_size too large")?;
-    let collision_count = usize::try_from(collision_count)
-        .map_err(|_| "keywordpir metadata collision_count too large")?;
-
-    Ok(KeywordPirMetadata {
-        entry_size,
-        num_entries,
-        bucket_size,
-        num_buckets,
-        num_hashes,
-        max_kicks,
-        seed,
-        collision_entry_size,
-        collision_count,
-    })
+    let metadata: KeywordPirMetadata = serde_json::from_str(&text)?;
+    Ok(metadata)
 }
 
 fn read_mapping_keys(
@@ -198,7 +123,7 @@ fn read_mapping_keys(
     let file = File::open(path)?;
     let len = file.metadata()?.len() as usize;
     let record_size = key_size + 4;
-    if record_size == 0 || len % record_size != 0 {
+    if len % record_size != 0 {
         return Err(format!("mapping file {} has invalid length", path.display()).into());
     }
     let count = len / record_size;
@@ -272,6 +197,66 @@ fn build_round_robin_keys(
         use_account = !use_account;
     }
     Ok(out)
+}
+
+fn buckets_for_entries(count: usize, bucket_size: usize) -> usize {
+    (count + bucket_size - 1) / bucket_size
+}
+
+fn collision_db_path(metadata_path: &Path) -> PathBuf {
+    metadata_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("keywordpir-collision-db.bin")
+}
+
+fn validate_collision_tag_count(
+    tags_len: usize,
+    collision_count: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let min_entries = tags_len
+        .checked_mul(2)
+        .ok_or("collision tag count overflow")?;
+    if collision_count < min_entries {
+        return Err(format!(
+            "collision tags count {} implies minimum collision_count {} (got {})",
+            tags_len, min_entries, collision_count
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn build_keyword_query_indices(
+    keyword_client: &KeywordPirClient,
+    collision_client: Option<&KeywordPirClient>,
+    collision_tags: Option<&HashSet<Tag>>,
+    keys: &[Vec<u8>],
+) -> Result<(Vec<u64>, Vec<u64>), Box<dyn std::error::Error>> {
+    let mut main_indices = Vec::new();
+    let mut collision_indices = Vec::new();
+    for key in keys {
+        let tag = tag_for_key(key).ok_or("invalid key length for tag")?;
+        let use_collision = collision_tags.map_or(false, |tags| tags.contains(&tag));
+        if use_collision {
+            let collision_client =
+                collision_client.ok_or("collision client missing for collision tags")?;
+            collision_indices.extend(
+                collision_client
+                    .positions_for_key(key)
+                    .into_iter()
+                    .map(|pos| pos as u64),
+            );
+        } else {
+            main_indices.extend(
+                keyword_client
+                    .positions_for_key(key)
+                    .into_iter()
+                    .map(|pos| pos as u64),
+            );
+        }
+    }
+    Ok((main_indices, collision_indices))
 }
 
 fn coverage_enabled(args: &Args) -> bool {
@@ -460,6 +445,45 @@ fn flush_batch(
     Ok(())
 }
 
+fn run_query_indices(
+    stream: &mut TcpStream,
+    client: &mut OnlineClient,
+    coverage: &Option<Vec<Vec<u32>>>,
+    record: &mut impl FnMut(&str, u64),
+    indices: impl IntoIterator<Item = u64>,
+    batch_size: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut pending: Vec<PendingItem> = Vec::new();
+    for idx in indices {
+        let build_start = Instant::now();
+        let (real_query, dummy_query, real_hint) = match coverage {
+            Some(coverage) => client.build_network_queries_with_coverage(idx, coverage)?,
+            None => client.build_network_queries(idx)?,
+        };
+        record("build_query", build_start.elapsed().as_micros() as u64);
+
+        let real = Query { id: real_query.id, subset: real_query.subset };
+        let dummy = Query { id: dummy_query.id, subset: dummy_query.subset };
+
+        pending.push(PendingItem {
+            query: real,
+            kind: PendingKind::Real { index: idx, hint: real_hint },
+        });
+        pending.push(PendingItem {
+            query: dummy,
+            kind: PendingKind::Dummy,
+        });
+
+        if pending.len() >= batch_size {
+            flush_batch(stream, &mut pending, batch_size, client, coverage, record)?;
+        }
+    }
+    while !pending.is_empty() {
+        flush_batch(stream, &mut pending, batch_size, client, coverage, record)?;
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let batch_size = args.batch_size.max(1);
@@ -468,12 +492,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => Mode::Rms24,
     };
     let is_keywordpir = matches!(mode, Mode::KeywordPir);
-    let keywordpir_metadata = if is_keywordpir {
+    let keywordpir_metadata_path = if is_keywordpir {
         let path = args
             .keywordpir_metadata
             .as_deref()
             .ok_or("keywordpir-metadata required for keywordpir mode")?;
-        let metadata = parse_keywordpir_metadata(Path::new(path))?;
+        Some(PathBuf::from(path))
+    } else {
+        None
+    };
+    let keywordpir_metadata = if is_keywordpir {
+        let path = keywordpir_metadata_path
+            .as_ref()
+            .ok_or("keywordpir metadata path missing")?;
+        let metadata = parse_keywordpir_metadata(path)?;
         if metadata.entry_size != args.entry_size {
             return Err(format!(
                 "keywordpir metadata entry_size {} does not match --entry-size {}",
@@ -489,30 +521,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (params, num_entries) = params_from_db(&db, args.entry_size, args.lambda)?;
     let state_path = args.state.as_deref().map(Path::new);
     let mut client = load_or_generate_client(&db, params.clone(), args.seed, state_path)?;
-    let coverage_enabled = coverage_enabled(&args);
-    let coverage = if coverage_enabled {
-        Some(client.build_coverage_index())
-    } else {
-        None
-    };
-
-    let threads = u32::try_from(args.threads)
-        .map_err(|_| "threads must fit in u32")?;
-    let batch_size_u32 =
-        u32::try_from(batch_size).map_err(|_| "batch_size must fit in u32")?;
-
-    let cfg = RunConfig {
-        dataset_id: "unknown".to_string(),
-        mode,
-        query_count: args.query_count,
-        threads,
-        seed: args.seed,
-        batch_size: batch_size_u32,
-        max_batch_queries: batch_size_u32,
-    };
-
     let mut keyword_client: Option<KeywordPirClient> = None;
     let mut keyword_keys: Vec<Vec<u8>> = Vec::new();
+    let mut collision_tags_set: Option<HashSet<Tag>> = None;
+    let mut collision_keyword_client: Option<KeywordPirClient> = None;
+    let mut collision_client: Option<OnlineClient> = None;
+    let mut collision_coverage: Option<Vec<Vec<u32>>> = None;
+    let mut collision_stream: Option<TcpStream> = None;
     if let Some(metadata) = keywordpir_metadata {
         if metadata.collision_entry_size == 0 {
             return Err("keywordpir metadata collision_entry_size must be >0".into());
@@ -537,8 +552,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .storage_mapping
             .as_deref()
             .ok_or("storage-mapping required for keywordpir mode")?;
-        let account_keys = read_mapping_keys(Path::new(account_path), 20)?;
-        let storage_keys = read_mapping_keys(Path::new(storage_path), 52)?;
+        let account_keys = read_mapping_keys(Path::new(account_path), ACCOUNT_KEY_SIZE)?;
+        let storage_keys = read_mapping_keys(Path::new(storage_path), STORAGE_KEY_SIZE)?;
         let mapping_count = account_keys.len() + storage_keys.len();
         if mapping_count != metadata.num_entries {
             return Err(format!(
@@ -561,18 +576,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(path) = args.collision_tags.as_deref() {
             let tags = read_collision_tags(Path::new(path))?;
             ensure_collision_server(&tags, args.collision_server.as_deref())?;
-            if tags.len() > metadata.collision_count {
-                return Err(format!(
-                    "collision tags count {} exceeds collision_count {}",
-                    tags.len(),
-                    metadata.collision_count
-                )
-                .into());
+            validate_collision_tag_count(tags.len(), metadata.collision_count)?;
+            if !tags.is_empty() {
+                if metadata.collision_count == 0 {
+                    return Err("collision tags provided but collision_count is 0".into());
+                }
+                let metadata_path = keywordpir_metadata_path
+                    .as_ref()
+                    .ok_or("keywordpir metadata path missing")?;
+                let collision_path = collision_db_path(metadata_path);
+                let collision_db = std::fs::read(&collision_path).map_err(|err| {
+                    format!(
+                        "failed to read collision db {}: {}",
+                        collision_path.display(),
+                        err
+                    )
+                })?;
+                let (collision_params, collision_num_entries) = params_from_db(
+                    &collision_db,
+                    metadata.collision_entry_size,
+                    args.lambda,
+                )?;
+                let collision_buckets =
+                    buckets_for_entries(metadata.collision_count, metadata.bucket_size);
+                let expected_collision_entries = collision_buckets
+                    .checked_mul(metadata.bucket_size)
+                    .ok_or("collision table size overflow")?;
+                if collision_num_entries != expected_collision_entries {
+                    return Err(format!(
+                        "collision table entries {} do not match expected {}",
+                        collision_num_entries, expected_collision_entries
+                    )
+                    .into());
+                }
+                let collision_cfg = CuckooConfig::new(
+                    collision_buckets,
+                    metadata.bucket_size,
+                    metadata.num_hashes,
+                    metadata.max_kicks,
+                    metadata.seed,
+                );
+                collision_keyword_client = Some(KeywordPirClient::new(KeywordPirParams {
+                    cfg: collision_cfg,
+                    entry_size: metadata.entry_size,
+                }));
+                collision_client = Some(load_or_generate_client(
+                    &collision_db,
+                    collision_params,
+                    args.seed,
+                    None,
+                )?);
+                collision_tags_set = Some(tags.iter().copied().collect());
             }
             kp_client.set_collision_tags(tags);
         }
         keyword_client = Some(kp_client);
     }
+    let coverage_enabled = coverage_enabled(&args);
+    let coverage = if coverage_enabled {
+        Some(client.build_coverage_index())
+    } else {
+        None
+    };
+    if coverage_enabled {
+        if let Some(ref mut collision_client) = collision_client {
+            collision_coverage = Some(collision_client.build_coverage_index());
+        }
+    }
+
+    let threads = u32::try_from(args.threads)
+        .map_err(|_| "threads must fit in u32")?;
+    let batch_size_u32 =
+        u32::try_from(batch_size).map_err(|_| "batch_size must fit in u32")?;
+
+    let cfg = RunConfig {
+        dataset_id: "unknown".to_string(),
+        mode,
+        query_count: args.query_count,
+        threads,
+        seed: args.seed,
+        batch_size: batch_size_u32,
+        max_batch_queries: batch_size_u32,
+    };
+
 
     let timeout = Duration::from_secs(DEFAULT_TCP_TIMEOUT_SECS);
     let mut stream = connect_with_timeouts(&args.server, timeout)?;
@@ -598,86 +684,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let start = Instant::now();
-    let mut pending: Vec<PendingItem> = Vec::new();
     if is_keywordpir {
         let keyword_client = keyword_client.as_ref().ok_or("keywordpir client missing")?;
-        for key in keyword_keys {
-            let positions = keyword_client.positions_for_key(&key);
-            for pos in positions {
-                let idx = pos as u64;
-                let build_start = Instant::now();
-                let (real_query, dummy_query, real_hint) = match &coverage {
-                    Some(coverage) => client.build_network_queries_with_coverage(idx, coverage)?,
-                    None => client.build_network_queries(idx)?,
-                };
-                record("build_query", build_start.elapsed().as_micros() as u64);
-
-                let real = Query { id: real_query.id, subset: real_query.subset };
-                let dummy = Query { id: dummy_query.id, subset: dummy_query.subset };
-
-                pending.push(PendingItem {
-                    query: real,
-                    kind: PendingKind::Real { index: idx, hint: real_hint },
-                });
-                pending.push(PendingItem {
-                    query: dummy,
-                    kind: PendingKind::Dummy,
-                });
-
-                if pending.len() >= batch_size {
-                    flush_batch(
-                        &mut stream,
-                        &mut pending,
-                        batch_size,
-                        &mut client,
-                        &coverage,
-                        &mut record,
-                    )?;
-                }
-            }
-        }
-    } else {
-        for i in 0..args.query_count {
-            let idx = (i % num_entries as u64) as u64;
-            let build_start = Instant::now();
-            let (real_query, dummy_query, real_hint) = match &coverage {
-                Some(coverage) => client.build_network_queries_with_coverage(idx, coverage)?,
-                None => client.build_network_queries(idx)?,
-            };
-            record("build_query", build_start.elapsed().as_micros() as u64);
-
-            let real = Query { id: real_query.id, subset: real_query.subset };
-            let dummy = Query { id: dummy_query.id, subset: dummy_query.subset };
-
-            pending.push(PendingItem {
-                query: real,
-                kind: PendingKind::Real { index: idx, hint: real_hint },
-            });
-            pending.push(PendingItem {
-                query: dummy,
-                kind: PendingKind::Dummy,
-            });
-
-            if pending.len() >= batch_size {
-                flush_batch(
-                    &mut stream,
-                    &mut pending,
-                    batch_size,
-                    &mut client,
-                    &coverage,
-                    &mut record,
-                )?;
-            }
-        }
-    }
-    while !pending.is_empty() {
-        flush_batch(
+        let collision_keyword_client = collision_keyword_client.as_ref();
+        let (main_indices, collision_indices) = build_keyword_query_indices(
+            keyword_client,
+            collision_keyword_client,
+            collision_tags_set.as_ref(),
+            &keyword_keys,
+        )?;
+        run_query_indices(
             &mut stream,
-            &mut pending,
-            batch_size,
             &mut client,
             &coverage,
             &mut record,
+            main_indices,
+            batch_size,
+        )?;
+
+        if !collision_indices.is_empty() {
+            let collision_addr = args
+                .collision_server
+                .as_deref()
+                .ok_or("collision-server required for collision queries")?;
+            let collision_stream = if let Some(ref mut stream) = collision_stream {
+                stream
+            } else {
+                let mut stream = connect_with_timeouts(collision_addr, timeout)?;
+                write_frame(&mut stream, &cfg_bytes)?;
+                collision_stream = Some(stream);
+                collision_stream.as_mut().ok_or("collision stream missing")?
+            };
+            let collision_client = collision_client
+                .as_mut()
+                .ok_or("collision client missing for collision queries")?;
+            run_query_indices(
+                collision_stream,
+                collision_client,
+                &collision_coverage,
+                &mut record,
+                collision_indices,
+                batch_size,
+            )?;
+        }
+    } else {
+        let indices = (0..args.query_count).map(|i| i % num_entries as u64);
+        run_query_indices(
+            &mut stream,
+            &mut client,
+            &coverage,
+            &mut record,
+            indices,
+            batch_size,
         )?;
     }
     let elapsed = start.elapsed();
@@ -883,5 +941,68 @@ mod tests {
         assert_eq!(num_entries, 2);
         assert_eq!(params.num_entries, 2);
         assert_eq!(params.entry_size, 4);
+    }
+
+    #[test]
+    fn test_build_keyword_query_indices_routes_collisions() {
+        let main_cfg = CuckooConfig::new(8, 2, 2, 32, 1);
+        let collision_cfg = CuckooConfig::new(4, 2, 2, 32, 1);
+        let main_client = KeywordPirClient::new(KeywordPirParams { cfg: main_cfg, entry_size: 40 });
+        let collision_client =
+            KeywordPirClient::new(KeywordPirParams { cfg: collision_cfg, entry_size: 40 });
+
+        let main_key = vec![0x11u8; 20];
+        let collision_key = vec![0x22u8; 20];
+        let tag = tag_for_key(&collision_key).unwrap();
+        let mut tags = HashSet::new();
+        tags.insert(tag);
+
+        let (main_indices, collision_indices) = build_keyword_query_indices(
+            &main_client,
+            Some(&collision_client),
+            Some(&tags),
+            &[main_key.clone(), collision_key.clone()],
+        )
+        .unwrap();
+
+        let expected_main: Vec<u64> = main_client
+            .positions_for_key(&main_key)
+            .into_iter()
+            .map(|pos| pos as u64)
+            .collect();
+        let expected_collision: Vec<u64> = collision_client
+            .positions_for_key(&collision_key)
+            .into_iter()
+            .map(|pos| pos as u64)
+            .collect();
+
+        assert_eq!(main_indices, expected_main);
+        assert_eq!(collision_indices, expected_collision);
+    }
+
+    #[test]
+    fn test_build_keyword_query_indices_requires_collision_client() {
+        let main_cfg = CuckooConfig::new(8, 2, 2, 32, 1);
+        let main_client = KeywordPirClient::new(KeywordPirParams { cfg: main_cfg, entry_size: 40 });
+        let collision_key = vec![0x33u8; 20];
+        let tag = tag_for_key(&collision_key).unwrap();
+        let mut tags = HashSet::new();
+        tags.insert(tag);
+
+        let err = build_keyword_query_indices(
+            &main_client,
+            None,
+            Some(&tags),
+            &[collision_key],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("collision client"));
+    }
+
+    #[test]
+    fn test_validate_collision_tag_count_requires_min_entries() {
+        let err = validate_collision_tag_count(3, 3).unwrap_err();
+        assert!(err.to_string().contains("collision tags count"));
+        validate_collision_tag_count(3, 6).unwrap();
     }
 }
