@@ -1,4 +1,11 @@
-use crate::schema40::Tag;
+use crate::schema40::{Tag, ENTRY_SIZE, TAG_SIZE};
+use std::hash::Hash;
+
+impl Hash for Tag {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct MappingRecord {
@@ -29,6 +36,22 @@ pub fn tag_for_key(key: &[u8]) -> Option<Tag> {
             addr.copy_from_slice(&key[..20]);
             slot.copy_from_slice(&key[20..]);
             Some(Tag::from_address_slot(&addr, &slot))
+        }
+        _ => None,
+    }
+}
+
+pub fn tag_from_entry(key_len: usize, entry: &[u8; ENTRY_SIZE]) -> Option<Tag> {
+    match key_len {
+        20 => {
+            let mut tag = [0u8; TAG_SIZE];
+            tag.copy_from_slice(&entry[24..32]);
+            Some(Tag(tag))
+        }
+        52 => {
+            let mut tag = [0u8; TAG_SIZE];
+            tag.copy_from_slice(&entry[32..40]);
+            Some(Tag(tag))
         }
         _ => None,
     }
@@ -159,6 +182,30 @@ impl CuckooTable {
             }
         }
         None
+    }
+
+    pub fn to_entry_bytes(&self) -> Vec<u8> {
+        let mut out = vec![0u8; self.slots.len() * ENTRY_SIZE];
+        for (idx, slot) in self.slots.iter().enumerate() {
+            if let Some(slot) = slot {
+                let offset = idx * ENTRY_SIZE;
+                out[offset..offset + ENTRY_SIZE].copy_from_slice(&slot.value);
+            }
+        }
+        out
+    }
+
+    pub fn to_collision_bytes(&self) -> Vec<u8> {
+        const COLLISION_ENTRY_SIZE: usize = 72;
+        let mut out = vec![0u8; self.slots.len() * COLLISION_ENTRY_SIZE];
+        for (idx, slot) in self.slots.iter().enumerate() {
+            if let Some(slot) = slot {
+                let offset = idx * COLLISION_ENTRY_SIZE;
+                out[offset..offset + 32].copy_from_slice(&slot.key_hash);
+                out[offset + 32..offset + COLLISION_ENTRY_SIZE].copy_from_slice(&slot.value);
+            }
+        }
+        out
     }
 }
 
