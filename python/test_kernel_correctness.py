@@ -120,6 +120,17 @@ class TestHintGenKernelCorrectness(unittest.TestCase):
         expected = torch.zeros(5, dtype=torch.int64)
         self.assertTrue(torch.equal(parities[0], expected),
             f"All invalid should give 0, got {parities[0]}")
+
+    @unittest.skipUnless(KERNEL_MODULE == "forge_v2", "forge_v2 only")
+    def test_zero_subset_size_returns_zero(self):
+        entries = torch.randint(1, 100, (10, 5), dtype=torch.int64)
+        indices = torch.zeros(3, 0, dtype=torch.int64)
+        mask = torch.zeros(3, 0, dtype=torch.bool)
+
+        parities = self.kernel(entries, indices, mask)
+
+        expected = torch.zeros(3, 5, dtype=torch.int64)
+        self.assertTrue(torch.equal(parities, expected))
     
     def test_multiple_hints_independent(self):
         """Multiple hints should be computed independently."""

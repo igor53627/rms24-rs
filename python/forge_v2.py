@@ -21,6 +21,14 @@ class HintGenKernel(nn.Module):
         # Apply mask: zero out invalid
         gathered = gathered * mask.unsqueeze(-1).long()
         
+        if gathered.shape[1] == 0:
+            return torch.zeros(
+                gathered.shape[0],
+                gathered.shape[2],
+                dtype=entries.dtype,
+                device=entries.device,
+            )
+
         # XOR reduction across subset dimension
         result = gathered[:, 0, :].clone()
         for i in range(1, gathered.shape[1]):
