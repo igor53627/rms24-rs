@@ -17,3 +17,9 @@ fn test_timing_helper_smoke() {
     t.add("read", 10);
     assert!(t.summary_line("read").contains("count=1"));
 }
+
+#[test]
+fn test_should_log_skips_zero_count() {
+    let t = TimingCounters::new(2);
+    assert!(!t.should_log("phase"));
+}
