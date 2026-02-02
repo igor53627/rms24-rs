@@ -11,6 +11,11 @@
 - [x] Integration tests (17 passing)
 - [x] Benchmarks (CPU hint gen, PRF ops)
 - [x] Modal GPU benchmark script
+- [x] Protocol completion (server module, query/response, client query generation, replenish/updates)
+- [x] Benchmark protocol + framing + batching + timing flags
+- [x] Benchmark client/server binaries with TCP timeouts + validation hardening
+- [x] Client state cache + coverage index for reproducible runs
+- [x] Benchmark harness script with dataset download + reporting
 
 ## In Progress
 
@@ -22,23 +27,23 @@
 
 ## Next Up
 
+### KeywordPIR (priority)
+- [ ] Port cuckoo hashing from Python
+- [ ] Builder binary for KeywordPIR tables + metadata
+- [ ] Collision table + tag pipeline (8-byte tags, collision DB)
+- [ ] KeywordPIR client wrapper + query path
+- [ ] KeywordPIR benchmark sweep (slice + full, reuse state cache)
+
+### Benchmarking + Profiling
+- [ ] Full-db benchmarks on hsiao (RMS24 + KeywordPIR)
+- [ ] Perf profile build_query / hint selection on hsiao
+- [ ] Track throughput/latency vs threads and batch size
+
 ### GPU Validation
 - [ ] Verify CPU/GPU parity consistency (same key -> same parities)
 - [ ] Benchmark warp kernel vs old kernel throughput
 - [ ] Test with mainnet-v3 dataset (73GB, 1.8B entries)
 - [ ] Implement backup hint high parity in warp kernel (currently TODO)
-
-### Protocol Completion
-- [ ] Server module (query answering)
-- [ ] Query/Response messages
-- [ ] Client query generation
-- [ ] Client extract + replenish hints
-- [ ] Hint updates (delta application)
-
-### Keyword PIR Layer
-- [ ] Port cuckoo hashing from Python
-- [ ] Keyword client/server wrappers
-- [ ] 8-byte TAG fingerprint verification
 
 ### Optimizations (Priority Order)
 
