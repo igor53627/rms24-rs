@@ -20,6 +20,17 @@ This project is a Rust library with optional Cargo features.
 - `rms24_server --timing`: Optional. Emits per-phase timing summaries during runs.
 - `rms24_server --timing-every <N>`: Optional. Emit timing summaries every N occurrences per phase (default: 1000).
 
+## KeywordPIR (benchmark client)
+
+KeywordPIR mode expects `rms24_client --db` to point at `keywordpir-db.bin`, plus the mapping and metadata artifacts from `rms24_keywordpir_build`.
+
+- `rms24_client --mode keywordpir`: Enable KeywordPIR benchmarking mode.
+- `rms24_client --keywordpir-metadata <path>`: Required. `keywordpir-metadata.json` from the builder.
+- `rms24_client --account-mapping <path>`: Required. Account mapping file (20-byte key + u32 index).
+- `rms24_client --storage-mapping <path>`: Required. Storage mapping file (52-byte key + u32 index).
+- `rms24_client --collision-tags <path>`: Optional. Collision tag list for keywordpir collisions.
+- `rms24_client --collision-server <addr>`: Required when `--collision-tags` is provided and non-empty.
+
 ## Online batching (benchmark client/server)
 
 - `rms24_client --batch-size <N>`: Optional. Send up to N network queries per frame.
