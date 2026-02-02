@@ -6,9 +6,12 @@ use rms24::client::OnlineClient;
 use rms24::params::Params;
 use rms24::prf::Prf;
 use sha3::{Digest, Sha3_256};
+use std::io;
 use std::net::TcpStream;
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+const DEFAULT_TCP_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Parser)]
 struct Args {
@@ -63,6 +66,13 @@ fn coverage_enabled(args: &Args) -> bool {
         Ok(val) => matches!(val.to_ascii_lowercase().as_str(), "1" | "true" | "yes"),
         Err(_) => false,
     }
+}
+
+fn connect_with_timeouts(addr: &str, timeout: Duration) -> io::Result<TcpStream> {
+    let stream = TcpStream::connect(addr)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    Ok(stream)
 }
 
 fn load_cached_client(
@@ -241,7 +251,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_batch_queries: batch_size,
     };
 
-    let mut stream = TcpStream::connect(&args.server)?;
+    let timeout = Duration::from_secs(DEFAULT_TCP_TIMEOUT_SECS);
+    let mut stream = connect_with_timeouts(&args.server, timeout)?;
     let cfg_bytes = bincode::serialize(&cfg)?;
     write_frame(&mut stream, &cfg_bytes)?;
 
@@ -412,5 +423,26 @@ mod tests {
             load_or_generate_client(&db, params.clone(), 42, Some(path.as_path())).unwrap();
         assert_eq!(loaded.next_query_id, 7);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_connect_with_timeouts_sets_read_write() {
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = thread::spawn(move || {
+            let _ = listener.accept();
+        });
+
+        let timeout = Duration::from_secs(60);
+        let stream = connect_with_timeouts(&addr.to_string(), timeout).unwrap();
+        assert_eq!(stream.read_timeout().unwrap(), Some(timeout));
+        assert_eq!(stream.write_timeout().unwrap(), Some(timeout));
+
+        let _ = handle.join();
     }
 }
