@@ -331,6 +331,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn test_parse_args() {
@@ -354,6 +360,7 @@ mod tests {
 
     #[test]
     fn test_coverage_env_enables_index() {
+        let _guard = env_lock().lock().unwrap();
         std::env::set_var("RMS24_COVERAGE_INDEX", "1");
         let args = Args::parse_from(["rms24-client", "--db", "db.bin"]);
         assert!(coverage_enabled(&args));
