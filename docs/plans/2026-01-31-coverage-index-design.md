@@ -35,6 +35,6 @@
 
 ## Testing
 
-- Ensure coverage index contains expected hints for known subset entries.
-- Ensure coverage-based query selection chooses a hint listed for target entry.
-- Ensure decode path works without mutating hint state.
+- Verify the coverage index contains expected hints for known subset entries.
+- Confirm coverage-based query selection chooses a hint listed for the target entry.
+- Validate the decode path works without mutating hint state.

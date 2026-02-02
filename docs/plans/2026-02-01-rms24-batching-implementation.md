@@ -10,13 +10,13 @@
 
 ---
 
-### Task 1: Extend bench protocol types for batching
+## Task 1: Extend bench protocol types for batching
 
-**Files:**
+### Files
 - Modify: `src/bench_proto.rs`
 - Test: `src/bench_proto.rs`
 
-**Step 1: Write the failing tests**
+### Step 1: Write the failing tests
 
 Add to `src/bench_proto.rs` test module:
 
@@ -44,12 +44,12 @@ fn test_batch_reply_roundtrip() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test bench_proto::tests::test_batch_request_roundtrip`
 Expected: FAIL (missing types `BatchRequest`/`ClientFrame`).
 
-**Step 3: Implement batch types + frame enums**
+### Step 3: Implement batch types + frame enums
 
 Update `src/bench_proto.rs`:
 
@@ -59,10 +59,10 @@ pub struct RunConfig {
     pub dataset_id: String,
     pub mode: Mode,
     pub query_count: u64,
-    pub threads: usize,
+    pub threads: u32,
     pub seed: u64,
-    pub batch_size: usize,
-    pub max_batch_queries: usize,
+    pub batch_size: u32,
+    pub max_batch_queries: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,12 +97,12 @@ pub enum Reply {
 
 Update existing tests in `src/bench_proto.rs` to use `Reply::Ok` and set `batch_size`/`max_batch_queries` in `RunConfig` roundtrip tests.
 
-**Step 4: Run tests to verify they pass**
+### Step 4: Run tests to verify they pass
 
 Run: `cargo test bench_proto::tests::test_batch_request_roundtrip`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bench_proto.rs
@@ -111,14 +111,14 @@ jj describe -m "feat: add batch frames to bench protocol"
 
 ---
 
-### Task 2: Add a bench handler for batched frames
+## Task 2: Add a bench handler for batched frames
 
-**Files:**
+### Files
 - Create: `src/bench_handler.rs`
 - Modify: `src/lib.rs`
 - Test: `src/bench_handler.rs`
 
-**Step 1: Write the failing tests**
+### Step 1: Write the failing tests
 
 Create `src/bench_handler.rs` with tests first:
 
@@ -218,12 +218,12 @@ mod tests {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test bench_handler::tests::test_batch_reply_order_and_error`
 Expected: FAIL (missing module/export/types).
 
-**Step 3: Implement module + export**
+### Step 3: Implement module + export
 
 - Keep the implementation above in `src/bench_handler.rs`.
 - Update `src/lib.rs`:
@@ -232,12 +232,12 @@ Expected: FAIL (missing module/export/types).
 pub mod bench_handler;
 ```
 
-**Step 4: Run tests to verify they pass**
+### Step 4: Run tests to verify they pass
 
 Run: `cargo test bench_handler::tests::test_batch_reply_order_and_error`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bench_handler.rs src/lib.rs
@@ -246,13 +246,13 @@ jj describe -m "feat: add bench frame handler for batching"
 
 ---
 
-### Task 3: Update server binary for batch frames
+## Task 3: Update server binary for batch frames
 
-**Files:**
+### Files
 - Modify: `src/bin/rms24_server.rs`
 - Test: `src/bin/rms24_server.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bin/rms24_server.rs` tests:
 
@@ -270,12 +270,12 @@ fn test_parse_args_batching() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test rms24_server::tests::test_parse_args_batching`
 Expected: FAIL (unknown arg or missing field).
 
-**Step 3: Implement batching in server**
+### Step 3: Implement batching in server
 
 Update `src/bin/rms24_server.rs`:
 
@@ -296,7 +296,7 @@ fn handle_client(
 ) -> io::Result<()> {
     let cfg_bytes = read_frame(&mut stream)?;
     let cfg: RunConfig = bincode::deserialize(&cfg_bytes).unwrap();
-    let max_batch = max_batch_queries.min(cfg.max_batch_queries);
+    let max_batch = max_batch_queries.min(cfg.max_batch_queries as usize);
 
     loop {
         let msg = read_frame(&mut stream)?;
@@ -310,12 +310,12 @@ fn handle_client(
 
 (Adjust timing measurement to wrap `handle_client_frame` for the `answer` phase.)
 
-**Step 4: Run tests to verify they pass**
+### Step 4: Run tests to verify they pass
 
 Run: `cargo test rms24_server::tests::test_parse_args_batching`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bin/rms24_server.rs
@@ -324,13 +324,13 @@ jj describe -m "feat: add batch handling to rms24 server"
 
 ---
 
-### Task 4: Update client binary for batched queries
+## Task 4: Update client binary for batched queries
 
-**Files:**
+### Files
 - Modify: `src/bin/rms24_client.rs`
 - Test: `src/bin/rms24_client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bin/rms24_client.rs` tests:
 
@@ -348,12 +348,12 @@ fn test_parse_args_batch_size() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test rms24_client::tests::test_parse_args_batch_size`
 Expected: FAIL (unknown arg or missing field).
 
-**Step 3: Implement batching in client**
+### Step 3: Implement batching in client
 
 Update `src/bin/rms24_client.rs`:
 
@@ -377,14 +377,16 @@ enum PendingKind {
     Dummy,
 }
 
+let threads = u32::try_from(args.threads)?;
+let batch_size_u32 = u32::try_from(args.batch_size)?;
 let cfg = RunConfig {
     dataset_id: "unknown".to_string(),
     mode,
     query_count: args.query_count,
-    threads: args.threads,
+    threads,
     seed: args.seed,
-    batch_size: args.batch_size,
-    max_batch_queries: args.batch_size,
+    batch_size: batch_size_u32,
+    max_batch_queries: batch_size_u32,
 };
 
 // Build pending items per logical query
@@ -417,6 +419,7 @@ fn flush_batch(
         ServerFrame::Error { message } => return Err(message.into()),
     };
 
+    let mut errors = Vec::new();
     for (item, reply) in batch.into_iter().zip(replies.into_iter()) {
         match (item.kind, reply) {
             (PendingKind::Real { index, hint }, Reply::Ok { parity, .. }) => {
@@ -427,8 +430,13 @@ fn flush_batch(
                 }
             }
             (_, Reply::Ok { .. }) => {}
-            (_, Reply::Error { message, .. }) => return Err(message.into()),
+            (_, Reply::Error { message, .. }) => {
+                errors.push(message);
+            }
         }
+    }
+    if !errors.is_empty() {
+        // record per-entry errors here (metrics/logging) while still completing the batch
     }
     Ok(())
 }
@@ -436,12 +444,12 @@ fn flush_batch(
 
 Ensure you flush remaining pending items after the loop.
 
-**Step 4: Run tests to verify they pass**
+### Step 4: Run tests to verify they pass
 
 Run: `cargo test rms24_client::tests::test_parse_args_batch_size`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bin/rms24_client.rs
@@ -450,12 +458,12 @@ jj describe -m "feat: add batching to rms24 client"
 
 ---
 
-### Task 5: Document batching flags
+## Task 5: Document batching flags
 
-**Files:**
+### Files
 - Modify: `docs/FEATURE_FLAGS.md`
 
-**Step 1: Update docs**
+### Step 1: Update docs
 
 Add a small section:
 
@@ -466,12 +474,12 @@ Add a small section:
 - `rms24_server --max-batch-queries N`: cap the number of queries in a batch.
 ```
 
-**Step 2: Sanity-check the doc**
+### Step 2: Sanity-check the doc
 
 Run: `rg -n "batch" docs/FEATURE_FLAGS.md`
 Expected: shows the new section.
 
-**Step 3: Commit**
+### Step 3: Commit
 
 ```bash
 jj add docs/FEATURE_FLAGS.md

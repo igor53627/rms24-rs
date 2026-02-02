@@ -316,6 +316,10 @@ def benchmark_gpu(
     print(f"GPU {gpu_id}: Generating {num_hints} hints (PRF on GPU, no CPU subset gen)")
 
     # PRF key as tensor with stable 32-bit bit patterns.
+    if len(prf_key) != 8:
+        raise ValueError("prf_key must contain 8 32-bit words")
+    if not all(isinstance(word, int) and 0 <= word < 2**32 for word in prf_key):
+        raise ValueError("prf_key words must be uint32 values")
     prf_key_np = np.array(prf_key, dtype=np.uint32)
     prf_key_t = torch.from_numpy(prf_key_np.view(np.int32)).to(device)
 

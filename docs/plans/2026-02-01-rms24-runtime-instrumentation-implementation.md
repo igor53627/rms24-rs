@@ -8,14 +8,14 @@
 
 **Tech Stack:** Rust, clap, std::time::Instant, existing binaries in `src/bin/`.
 
-### Task 1: Add timing helper module
+## Task 1: Add timing helper module
 
-**Files:**
+### Files
 - Create: `src/bench_timing.rs`
 - Modify: `src/lib.rs`
 - Test: `tests/bench_timing_test.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 ```rust
 use rms24::bench_timing::TimingCounters;
@@ -32,12 +32,12 @@ fn test_timing_summary_format() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_timing_summary_format --test bench_timing_test`
 Expected: FAIL (module or type not found)
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 ```rust
 // src/bench_timing.rs
@@ -69,7 +69,7 @@ impl TimingCounters {
 
     pub fn should_log(&self, phase: &str) -> bool {
         let count = *self.counts.get(phase).unwrap_or(&0);
-        self.log_every > 0 && count % self.log_every == 0
+        self.log_every > 0 && count > 0 && count % self.log_every == 0
     }
 }
 ```
@@ -79,25 +79,25 @@ Add module export in `src/lib.rs`:
 pub mod bench_timing;
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_timing_summary_format --test bench_timing_test`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bench_timing.rs src/lib.rs tests/bench_timing_test.rs
 jj commit -m "feat: add timing helper for benchmarks"
 ```
 
-### Task 2: Client timing flags and instrumentation
+## Task 2: Client timing flags and instrumentation
 
-**Files:**
+### Files
 - Modify: `src/bin/rms24_client.rs`
 - Test: `src/bin/rms24_client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 ```rust
 #[test]
@@ -115,12 +115,12 @@ fn test_parse_args_timing_flags() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_parse_args_timing_flags --bin rms24_client`
 Expected: FAIL (flags missing)
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 - Add CLI flags to `Args`:
 ```rust
@@ -140,25 +140,25 @@ Expected: FAIL (flags missing)
 
 - Emit summary lines when `timing` enabled and `should_log()` is true.
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_parse_args_timing_flags --bin rms24_client`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bin/rms24_client.rs
 jj commit -m "feat: add timing flags to rms24 client"
 ```
 
-### Task 3: Server timing flags and instrumentation
+## Task 3: Server timing flags and instrumentation
 
-**Files:**
+### Files
 - Modify: `src/bin/rms24_server.rs`
 - Test: `src/bin/rms24_server.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 ```rust
 #[test]
@@ -176,12 +176,12 @@ fn test_parse_args_timing_flags() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_parse_args_timing_flags --bin rms24_server`
 Expected: FAIL (flags missing)
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 - Add CLI flags to `Args`:
 ```rust
@@ -200,25 +200,25 @@ Expected: FAIL (flags missing)
 
 - Emit summary lines when `timing` enabled and `should_log()` is true.
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_parse_args_timing_flags --bin rms24_server`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bin/rms24_server.rs
 jj commit -m "feat: add timing flags to rms24 server"
 ```
 
-### Task 4: Wire timing helper in client/server
+## Task 4: Wire timing helper in client/server
 
-**Files:**
+### Files
 - Modify: `src/bin/rms24_client.rs`
 - Modify: `src/bin/rms24_server.rs`
 
-**Step 1: Write a failing test**
+### Step 1: Write a failing test
 
 ```rust
 #[test]
@@ -229,40 +229,40 @@ fn test_timing_helper_smoke() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_timing_helper_smoke --test bench_timing_test`
 Expected: FAIL
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 - Use `TimingCounters` in client/server.
 - Add a final summary print when the loop exits.
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_timing_helper_smoke --test bench_timing_test`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bin/rms24_client.rs src/bin/rms24_server.rs
 jj commit -m "feat: wire timing counters into client and server"
 ```
 
-### Task 5: Docs for flags
+## Task 5: Docs for flags
 
-**Files:**
+### Files
 - Modify: `docs/FEATURE_FLAGS.md`
 
-**Step 1: Update docs**
+### Step 1: Update docs
 
 Add flags:
 - `--timing` and `--timing-every` for `rms24_client`
 - `--timing` and `--timing-every` for `rms24_server`
 
-**Step 2: Commit**
+### Step 2: Commit
 
 ```bash
 jj add docs/FEATURE_FLAGS.md
@@ -271,9 +271,9 @@ jj commit -m "docs: document timing flags"
 
 ## Verification
 
-- `cargo test tests/bench_timing_test.rs::test_timing_summary_format`
-- `cargo test src/bin/rms24_client.rs::tests::test_parse_args_timing_flags`
-- `cargo test src/bin/rms24_server.rs::tests::test_parse_args_timing_flags`
+- `cargo test test_timing_summary_format --test bench_timing_test`
+- `cargo test test_parse_args_timing_flags --bin rms24_client`
+- `cargo test test_parse_args_timing_flags --bin rms24_server`
 
 ## Execution
 

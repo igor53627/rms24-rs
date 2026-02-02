@@ -70,10 +70,10 @@ Run perf on hsiao for both client and server to corroborate timing logs. Use fla
   - Else compute via `build_subset_for_hint`, store, and return.
 - This removes repeated PRF scans for the same hint during query building.
 
-**Flags:**
+#### Flags
 - `--subset-cache` or `RMS24_SUBSET_CACHE=1` to enable.
 
-**Serialization:**
+#### Serialization
 - Do not serialize by default (avoid state bloat). Optional follow-up if memory/time tradeoff is favorable.
 
 ### Client: coverage index default
@@ -122,4 +122,3 @@ Run perf on hsiao for both client and server to corroborate timing logs. Use fla
 - Subset cache memory overhead may be high for large hint counts.
 - Coverage index size may be large; must remain optional and not serialized.
 - Instrumentation overhead could affect microbenchmarks; keep disabled by default.
-

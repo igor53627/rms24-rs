@@ -51,15 +51,15 @@ Reduce per-query framing overhead in the online protocol by batching queries, wh
 
 - Extend framed message enums:
   - `ClientFrame::Query(Query)`
-  - `ClientFrame::BatchRequest(Vec<Query>)`
+  - `ClientFrame::BatchRequest(BatchRequest)`
   - `ServerFrame::Reply(Reply)`
-  - `ServerFrame::BatchReply(Vec<Reply>)`
+  - `ServerFrame::BatchReply(BatchReply)`
 
 ### RunConfig
 
-- Add batching fields (exact shape to be decided by implementation):
-  - `batching: bool` or `batch_size: Option<usize>`
-  - `max_batch_queries: usize`
+- Add batching fields:
+  - `batch_size: u32`
+  - `max_batch_queries: u32`
 
 ### CLI
 

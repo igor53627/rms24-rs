@@ -10,14 +10,14 @@
 
 ---
 
-### Task 1: Add benchmark protocol types
+## Task 1: Add benchmark protocol types
 
-**Files:**
+### Files
 - Create: `src/bench_proto.rs`
 - Modify: `src/lib.rs`
 - Test: `src/bench_proto.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bench_proto.rs`:
 ```rust
@@ -41,12 +41,12 @@ mod tests {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test bench_proto::tests::test_bincode_roundtrip`
 Expected: FAIL (missing types/module)
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 Create `src/bench_proto.rs`:
 ```rust
@@ -63,7 +63,7 @@ pub struct RunConfig {
     pub dataset_id: String,
     pub mode: Mode,
     pub query_count: u64,
-    pub threads: usize,
+    pub threads: u32,
     pub seed: u64,
 }
 
@@ -85,12 +85,12 @@ Update `src/lib.rs` exports:
 pub mod bench_proto;
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test bench_proto::tests::test_bincode_roundtrip`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 ```bash
 git add src/bench_proto.rs src/lib.rs
 jj describe -m "feat: add benchmark protocol types"
@@ -98,14 +98,14 @@ jj describe -m "feat: add benchmark protocol types"
 
 ---
 
-### Task 2: Add TCP framing helpers
+## Task 2: Add TCP framing helpers
 
-**Files:**
+### Files
 - Create: `src/bench_framing.rs`
 - Modify: `src/lib.rs`
 - Test: `src/bench_framing.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bench_framing.rs`:
 ```rust
@@ -125,12 +125,12 @@ mod tests {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test bench_framing::tests::test_frame_roundtrip`
 Expected: FAIL
 
-**Step 3: Implement framing**
+### Step 3: Implement framing
 
 Create `src/bench_framing.rs`:
 ```rust
@@ -157,12 +157,12 @@ Export in `src/lib.rs`:
 pub mod bench_framing;
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test bench_framing::tests::test_frame_roundtrip`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 ```bash
 git add src/bench_framing.rs src/lib.rs
 jj describe -m "feat: add benchmark tcp framing"
@@ -170,13 +170,13 @@ jj describe -m "feat: add benchmark tcp framing"
 
 ---
 
-### Task 3: Add rms24-server binary
+## Task 3: Add rms24-server binary
 
-**Files:**
+### Files
 - Create: `src/bin/rms24_server.rs`
 - Test: `src/bin/rms24_server.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bin/rms24_server.rs` (test module at bottom):
 ```rust
@@ -199,12 +199,12 @@ mod tests {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test rms24_server::tests::test_parse_args`
 Expected: FAIL
 
-**Step 3: Implement server**
+### Step 3: Implement server
 
 Create `src/bin/rms24_server.rs`:
 ```rust
@@ -231,14 +231,17 @@ struct Args {
 fn handle_client(mut stream: TcpStream, server: &Server) -> io::Result<()> {
     // First message: RunConfig (ignored for now)
     let cfg_bytes = read_frame(&mut stream)?;
-    let _cfg: RunConfig = bincode::deserialize(&cfg_bytes).unwrap();
+    let _cfg: RunConfig = bincode::deserialize(&cfg_bytes)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
     loop {
         let msg = read_frame(&mut stream)?;
-        let query: Query = bincode::deserialize(&msg).unwrap();
+        let query: Query = bincode::deserialize(&msg)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         let parity = server.answer(query.index)?;
         let reply = Reply { id: query.id, parity };
-        let out = bincode::serialize(&reply).unwrap();
+        let out = bincode::serialize(&reply)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         write_frame(&mut stream, &out)?;
     }
 }
@@ -262,12 +265,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test rms24_server::tests::test_parse_args`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 ```bash
 git add src/bin/rms24_server.rs
 jj describe -m "feat: add rms24 benchmark server"
@@ -275,13 +278,13 @@ jj describe -m "feat: add rms24 benchmark server"
 
 ---
 
-### Task 4: Add rms24-client binary
+## Task 4: Add rms24-client binary
 
-**Files:**
+### Files
 - Create: `src/bin/rms24_client.rs`
 - Test: `src/bin/rms24_client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bin/rms24_client.rs`:
 ```rust
@@ -304,12 +307,12 @@ mod tests {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test rms24_client::tests::test_parse_args`
 Expected: FAIL
 
-**Step 3: Implement client**
+### Step 3: Implement client
 
 Create `src/bin/rms24_client.rs`:
 ```rust
@@ -335,7 +338,7 @@ struct Args {
     #[arg(long, default_value = "1000")]
     query_count: u64,
     #[arg(long, default_value = "1")]
-    threads: usize,
+    threads: u32,
     #[arg(long, default_value = "0")]
     seed: u64,
     #[arg(long, default_value = "rms24")]
@@ -384,12 +387,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test rms24_client::tests::test_parse_args`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 ```bash
 git add src/bin/rms24_client.rs
 jj describe -m "feat: add rms24 benchmark client"
@@ -397,12 +400,12 @@ jj describe -m "feat: add rms24 benchmark client"
 
 ---
 
-### Task 5: Add benchmark harness script
+## Task 5: Add benchmark harness script
 
-**Files:**
+### Files
 - Create: `scripts/bench_hsiao.sh`
 
-**Step 1: Write script skeleton**
+### Step 1: Write script skeleton
 
 Create `scripts/bench_hsiao.sh` with:
 ```bash
@@ -419,7 +422,7 @@ echo "run_id=$RUN_ID" | tee "$RUN_DIR/env.txt"
 # TODO: add env capture, dataset download, server/client runs
 ```
 
-**Step 2: Commit skeleton**
+### Step 2: Commit skeleton
 ```bash
 git add scripts/bench_hsiao.sh
 jj describe -m "feat: add benchmark harness script skeleton"
@@ -427,27 +430,27 @@ jj describe -m "feat: add benchmark harness script skeleton"
 
 ---
 
-### Task 6: Fill harness steps (download, run, report)
+## Task 6: Fill harness steps (download, run, report)
 
-**Files:**
+### Files
 - Modify: `scripts/bench_hsiao.sh`
 
-**Step 1: Add download + checksum steps**
+### Step 1: Add download + checksum steps
 - Use URLs from `plinko-rs/docs/data_format.md`
 - Write SHA256s to `$RUN_DIR`
 
-**Step 2: Add server start/stop**
+### Step 2: Add server start/stop
 - Start `rms24-server` in background, save PID
 - Trap to kill server on exit
 
-**Step 3: Add client runs**
+### Step 3: Add client runs
 - Run 1k/10k queries, threads 1 and 4
 - Save JSONL logs to `$RUN_DIR`
 
-**Step 4: Add summary CSV + report.md**
+### Step 4: Add summary CSV + report.md
 - Parse JSONL with `python` or `jq`
 
-**Step 5: Commit**
+### Step 5: Commit
 ```bash
 git add scripts/bench_hsiao.sh
 jj describe -m "feat: add benchmark harness steps"

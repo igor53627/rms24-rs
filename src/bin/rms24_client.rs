@@ -7,7 +7,7 @@ use rms24::params::Params;
 use rms24::prf::Prf;
 use sha3::{Digest, Sha3_256};
 use std::io;
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -58,6 +58,24 @@ fn params_match(a: &Params, b: &Params) -> bool {
         && a.security_param == b.security_param
 }
 
+fn params_from_db(
+    db: &[u8],
+    entry_size: usize,
+    lambda: u32,
+) -> Result<(Params, usize), Box<dyn std::error::Error>> {
+    if entry_size == 0 {
+        return Err("entry_size must be >0".into());
+    }
+    if db.is_empty() {
+        return Err("db must contain at least one entry".into());
+    }
+    if db.len() % entry_size != 0 {
+        return Err("entry_size must divide db length".into());
+    }
+    let num_entries = db.len() / entry_size;
+    Ok((Params::new(num_entries as u64, entry_size, lambda), num_entries))
+}
+
 fn coverage_enabled(args: &Args) -> bool {
     if args.coverage_index {
         return true;
@@ -69,10 +87,25 @@ fn coverage_enabled(args: &Args) -> bool {
 }
 
 fn connect_with_timeouts(addr: &str, timeout: Duration) -> io::Result<TcpStream> {
-    let stream = TcpStream::connect(addr)?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
-    Ok(stream)
+    let mut last_err = None;
+    let addrs = addr
+        .to_socket_addrs()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "failed to resolve socket addresses"))?;
+    for socket_addr in addrs {
+        match TcpStream::connect_timeout(&socket_addr, timeout) {
+            Ok(stream) => {
+                stream.set_read_timeout(Some(timeout))?;
+                stream.set_write_timeout(Some(timeout))?;
+                return Ok(stream);
+            }
+            Err(err) => {
+                last_err = Some(err);
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "failed to resolve socket addresses")
+    }))
 }
 
 fn load_cached_client(
@@ -202,6 +235,14 @@ fn flush_batch(
         ServerFrame::BatchReply(batch) => batch.replies,
         ServerFrame::Error { message } => return Err(message.into()),
     };
+    if replies.len() != batch.len() {
+        return Err(format!(
+            "batch reply count {} does not match request count {}",
+            replies.len(),
+            batch.len()
+        )
+        .into());
+    }
 
     for (item, reply) in batch.into_iter().zip(replies.into_iter()) {
         match (item.kind, reply) {
@@ -225,8 +266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let batch_size = args.batch_size.max(1);
     let db = std::fs::read(&args.db)?;
-    let num_entries = db.len() / args.entry_size;
-    let params = Params::new(num_entries as u64, args.entry_size, args.lambda);
+    let (params, num_entries) = params_from_db(&db, args.entry_size, args.lambda)?;
     let state_path = args.state.as_deref().map(Path::new);
     let mut client = load_or_generate_client(&db, params.clone(), args.seed, state_path)?;
     let coverage_enabled = coverage_enabled(&args);
@@ -240,15 +280,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "keywordpir" => Mode::KeywordPir,
         _ => Mode::Rms24,
     };
+    let threads = u32::try_from(args.threads)
+        .map_err(|_| "threads must fit in u32")?;
+    let batch_size_u32 =
+        u32::try_from(batch_size).map_err(|_| "batch_size must fit in u32")?;
 
     let cfg = RunConfig {
         dataset_id: "unknown".to_string(),
         mode,
         query_count: args.query_count,
-        threads: args.threads,
+        threads,
         seed: args.seed,
-        batch_size,
-        max_batch_queries: batch_size,
+        batch_size: batch_size_u32,
+        max_batch_queries: batch_size_u32,
     };
 
     let timeout = Duration::from_secs(DEFAULT_TCP_TIMEOUT_SECS);
@@ -451,5 +495,47 @@ mod tests {
         assert_eq!(stream.write_timeout().unwrap(), Some(timeout));
 
         let _ = handle.join();
+    }
+
+    #[test]
+    fn test_connect_with_timeouts_invalid_address_message() {
+        use std::time::Duration;
+
+        let timeout = Duration::from_secs(1);
+        let err = connect_with_timeouts("127.0.0.1", timeout).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(err
+            .to_string()
+            .contains("failed to resolve socket addresses"));
+    }
+
+    #[test]
+    fn test_params_from_db_rejects_zero_entry_size() {
+        let db = vec![0u8; 10];
+        let err = params_from_db(&db, 0, 80).unwrap_err();
+        assert!(err.to_string().contains("entry_size"));
+    }
+
+    #[test]
+    fn test_params_from_db_rejects_unaligned_db() {
+        let db = vec![0u8; 5];
+        let err = params_from_db(&db, 4, 80).unwrap_err();
+        assert!(err.to_string().contains("entry_size"));
+    }
+
+    #[test]
+    fn test_params_from_db_rejects_empty_db() {
+        let db = vec![];
+        let err = params_from_db(&db, 4, 80).unwrap_err();
+        assert!(err.to_string().contains("db must contain"));
+    }
+
+    #[test]
+    fn test_params_from_db_ok() {
+        let db = vec![0u8; 8];
+        let (params, num_entries) = params_from_db(&db, 4, 80).unwrap();
+        assert_eq!(num_entries, 2);
+        assert_eq!(params.num_entries, 2);
+        assert_eq!(params.entry_size, 4);
     }
 }

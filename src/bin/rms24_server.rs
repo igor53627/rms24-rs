@@ -60,7 +60,7 @@ fn handle_client(
 ) -> io::Result<()> {
     let cfg_bytes = read_frame(&mut stream)?;
     let cfg: RunConfig = parse_run_config(&cfg_bytes)?;
-    let max_batch = max_batch_queries.min(cfg.max_batch_queries);
+    let max_batch = max_batch_queries.min(cfg.max_batch_queries as usize);
 
     let mut timing = timing_enabled.then(|| TimingCounters::new(timing_every));
     let mut record = |phase: &str, micros: u64| {
@@ -93,7 +93,13 @@ fn handle_client(
         let out = handle_client_frame(&server, frame, max_batch);
         record("answer", answer_start.elapsed().as_micros() as u64);
         let serialize_start = Instant::now();
-        let out_bytes = bincode::serialize(&out).unwrap();
+        let out_bytes = match bincode::serialize(&out) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                eprintln!("failed to serialize response: {err}");
+                return Err(io::Error::new(io::ErrorKind::InvalidData, err));
+            }
+        };
         record("serialize", serialize_start.elapsed().as_micros() as u64);
         let write_start = Instant::now();
         write_frame(&mut stream, &out_bytes)?;
@@ -106,7 +112,16 @@ fn build_server(
     entry_size: usize,
     lambda: u32,
 ) -> Result<Server<InMemoryDb>, Box<dyn std::error::Error>> {
+    if entry_size == 0 {
+        return Err("entry_size must be >0".into());
+    }
     let db = std::fs::read(db_path)?;
+    if db.len() % entry_size != 0 {
+        return Err("entry_size must divide db length".into());
+    }
+    if db.is_empty() {
+        return Err("db must contain at least one entry".into());
+    }
     let num_entries = db.len() / entry_size;
     let params = Params::new(num_entries as u64, entry_size, lambda);
     let db = InMemoryDb::new(db, entry_size)?;
@@ -183,6 +198,46 @@ mod tests {
             "32",
         ]);
         assert_eq!(args.max_batch_queries, 32);
+    }
+
+    #[test]
+    fn test_build_server_rejects_zero_entry_size() {
+        let path = std::env::temp_dir().join("rms24_server_entry_size_zero.bin");
+        std::fs::write(&path, vec![0u8; 16]).unwrap();
+
+        let result = std::panic::catch_unwind(|| build_server(path.to_str().unwrap(), 0, 80));
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_err());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_build_server_rejects_unaligned_db_len() {
+        let path = std::env::temp_dir().join("rms24_server_unaligned.bin");
+        std::fs::write(&path, vec![0u8; 5]).unwrap();
+
+        let err = match build_server(path.to_str().unwrap(), 4, 80) {
+            Ok(_) => panic!("expected error for unaligned db length"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("entry_size"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_build_server_rejects_empty_db() {
+        let path = std::env::temp_dir().join("rms24_server_empty.bin");
+        std::fs::write(&path, Vec::<u8>::new()).unwrap();
+
+        let err = match build_server(path.to_str().unwrap(), 4, 80) {
+            Ok(_) => panic!("expected error for empty db"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("db must contain"));
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

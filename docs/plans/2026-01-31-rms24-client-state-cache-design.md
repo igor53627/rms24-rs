@@ -26,7 +26,7 @@ If the process restarts, we lose hours of work. We need reproducible, restartabl
 
 Add a new CLI flag to `rms24_client`:
 
-```
+```text
 --state <path>
 ```
 
@@ -36,7 +36,7 @@ hints, logs progress, and saves the state to `<path>`.
 
 The bench harness will pass a fixed cache path such as:
 
-```
+```text
 /data/rms24/cache/hints_${dataset}_entry${entry}_lambda${lambda}_seed${seed}.bin
 ```
 
@@ -62,7 +62,7 @@ Add percent‑based logs inside `Client::generate_hints()`:
 
 Each log line includes phase, percent, elapsed seconds, and ETA, e.g.:
 
-```
+```text
 progress phase=phase1 pct=12.0 elapsed_s=123 eta_s=900
 ```
 

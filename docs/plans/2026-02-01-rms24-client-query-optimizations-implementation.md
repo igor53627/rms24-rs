@@ -8,13 +8,13 @@
 
 **Tech Stack:** Rust, existing `OnlineClient` logic in `src/client.rs`, tests in `src/client.rs` and `tests/`.
 
-### Task 1: Add subset cache storage on OnlineClient
+## Task 1: Add subset cache storage on OnlineClient
 
-**Files:**
+### Files
 - Modify: `src/client.rs`
 - Test: `src/client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `client::tests` in `src/client.rs`:
 ```rust
@@ -32,15 +32,15 @@ fn test_subset_cache_matches_uncached() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_subset_cache_matches_uncached --lib`
 Expected: FAIL (no subset cache / method)
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 - Add `subset_cache: Vec<Option<Vec<(u32, u32)>>>` to `OnlineClient`.
-- Initialize it in `OnlineClient::new` with `vec![None; total_hints]`.
+- Initialize it in `OnlineClient::new` with `vec![None; total_hints]`, where `total_hints = (params.num_reg_hints + params.num_backup_hints) as usize`.
 - Add a private helper:
 ```rust
 fn get_subset_for_hint(&mut self, hint_id: usize) -> Vec<(u32, u32)> {
@@ -53,25 +53,25 @@ fn get_subset_for_hint(&mut self, hint_id: usize) -> Vec<(u32, u32)> {
 }
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_subset_cache_matches_uncached --lib`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add src/client.rs
 git commit -m "feat: add subset cache for client hints"
 ```
 
-### Task 2: Use subset cache in query building
+## Task 2: Use subset cache in query building
 
-**Files:**
+### Files
 - Modify: `src/client.rs`
 - Test: `src/client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `client::tests` in `src/client.rs`:
 ```rust
@@ -91,36 +91,37 @@ fn test_subset_cache_reuse() {
     assert!(first.is_some());
 }
 ```
+Note: keep this test in `src/client.rs` so it can access the private field without adding a public accessor.
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_subset_cache_reuse --lib`
 Expected: FAIL (subset_cache not present or not accessible)
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 - In `build_network_queries` and `build_network_queries_with_coverage`, replace calls to `build_subset_for_hint` with `get_subset_for_hint`.
-- Ensure `subset_cache` is cleared/reinitialized when hints are regenerated or client state is reset.
+- Add a test that calls `generate_hints` twice and asserts the cache is cleared, then implement cache invalidation by resetting `subset_cache` to `None` for all entries inside `OnlineClient::generate_hints`.
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_subset_cache_reuse --lib`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add src/client.rs
 git commit -m "perf: reuse cached subsets in query building"
 ```
 
-### Task 3: Use coverage index by default (when available)
+## Task 3: Use coverage index by default (when available)
 
-**Files:**
+### Files
 - Modify: `src/bin/rms24_client.rs`
 - Test: `src/bin/rms24_client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bin/rms24_client.rs` tests:
 ```rust
@@ -136,36 +137,36 @@ fn test_default_coverage_flag() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_default_coverage_flag --bin rms24_client`
 Expected: FAIL if coverage default is not enabled.
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 - Keep `--coverage-index` flag, but default coverage usage on when state cache is enabled and `coverage_index` flag is true.
 - If coverage is enabled, build coverage once and use it for all queries.
 - If coverage entry is empty, fall back to `build_network_queries`.
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_default_coverage_flag --bin rms24_client`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add src/bin/rms24_client.rs
 git commit -m "feat: use coverage index by default when enabled"
 ```
 
-### Task 4: Privacy regression test (fixed seed)
+## Task 4: Privacy regression test (fixed seed)
 
-**Files:**
+### Files
 - Modify: `src/client.rs`
 - Test: `src/client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `client::tests` in `src/client.rs`:
 ```rust
@@ -175,6 +176,9 @@ fn test_query_bytes_equivalent_with_cache() {
     let prf = Prf::new([5u8; 32]);
     let mut client_uncached = OnlineClient::new(params.clone(), prf.clone(), 123);
     let mut client_cached = OnlineClient::new(params, prf, 123);
+    let db = vec![7u8; (params.num_entries as usize) * params.entry_size];
+    client_uncached.generate_hints(&db).unwrap();
+    client_cached.generate_hints(&db).unwrap();
     let _ = client_cached.get_subset_for_hint(0);
 
     let (real_unc, dummy_unc, _h_unc) = client_uncached.build_network_queries(3).unwrap();
@@ -190,39 +194,39 @@ fn test_query_bytes_equivalent_with_cache() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_query_bytes_equivalent_with_cache --lib`
 Expected: FAIL if caching changes output.
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 - Ensure caching does not change subset ordering or random selection.
 - Keep query construction identical.
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_query_bytes_equivalent_with_cache --lib`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add src/client.rs
 git commit -m "test: assert cached queries match uncached bytes"
 ```
 
-### Task 5: Docs (feature flags + memory tradeoff note)
+## Task 5: Docs (feature flags + memory tradeoff note)
 
-**Files:**
+### Files
 - Modify: `docs/FEATURE_FLAGS.md`
 - Modify: `docs/ARCHITECTURE.md` (if exists)
 
-**Step 1: Update docs**
+### Step 1: Update docs
 
 Document new subset cache behavior and memory cost note. Mention coverage index default behavior.
 
-**Step 2: Commit**
+### Step 2: Commit
 
 ```bash
 git add docs/FEATURE_FLAGS.md docs/ARCHITECTURE.md

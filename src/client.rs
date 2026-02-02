@@ -205,6 +205,7 @@ impl Client {
         let phase2_start = Instant::now();
         let phase2_done = AtomicUsize::new(0);
 
+        // Per-hint buffers keep rayon workers independent; reuse would require shared mutation.
         let parity_results: Vec<ParityResult> = (0..num_total)
             .into_par_iter()
             .map_init(
@@ -245,6 +246,9 @@ impl Client {
                             }
 
                             let entry_start = entry_idx as usize * entry_size;
+                            if entry_start + entry_size > db.len() {
+                                continue;
+                            }
                             let entry = &db[entry_start..entry_start + entry_size];
 
                             if hint_idx < num_reg {
@@ -264,8 +268,10 @@ impl Client {
                             let extra_idx = (extra_block as u64 * block_size) + extra_offset as u64;
                             if extra_idx < p.num_entries {
                                 let extra_start = extra_idx as usize * entry_size;
-                                let extra_entry = &db[extra_start..extra_start + entry_size];
-                                xor_bytes_inplace(&mut parity, extra_entry);
+                                if extra_start + entry_size <= db.len() {
+                                    let extra_entry = &db[extra_start..extra_start + entry_size];
+                                    xor_bytes_inplace(&mut parity, extra_entry);
+                                }
                             }
                         }
                     }
@@ -346,6 +352,8 @@ impl OnlineClient {
         offline.generate_hints(db);
         self.hints = offline.hints;
         self.available_hints = (0..self.params.num_reg_hints as usize).collect();
+        let total = (self.params.num_reg_hints + self.params.num_backup_hints) as usize;
+        self.hint_prf_ids = (0..total).map(|id| id as u32).collect();
         self.reset_subset_cache();
         Ok(())
     }
@@ -486,14 +494,19 @@ impl OnlineClient {
         if index >= self.params.num_entries {
             return Err(ClientError::InvalidIndex);
         }
+        if index as usize >= coverage.len() {
+            return Err(ClientError::InvalidIndex);
+        }
         let target_block = self.params.block_of(index) as u32;
         let target_offset = self.params.offset_in_block(index) as u32;
 
+        let available_set: HashSet<usize> =
+            self.available_hints.iter().copied().collect();
         let mut candidates: Vec<usize> = coverage[index as usize]
             .iter()
             .copied()
             .map(|id| id as usize)
-            .filter(|hint_id| self.available_hints.contains(hint_id))
+            .filter(|hint_id| available_set.contains(hint_id))
             .collect();
 
         if candidates.is_empty() {
@@ -907,6 +920,17 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_hints_handles_short_db() {
+        let params = Params::new(64, 40, 2);
+        let mut client = Client::with_prf(params, Prf::new([0u8; 32]));
+        let db = vec![0u8; (64 * 40) - 1];
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.generate_hints(&db);
+        }));
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_hint_coverage() {
         let params = Params::new(100, 40, 8);
         let mut client = Client::with_prf(params.clone(), Prf::new([0u8; 32]));
@@ -986,6 +1010,17 @@ mod tests {
         let id1 = client.next_query_id();
         let id2 = client2.next_query_id();
         assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_generate_hints_resets_hint_prf_ids() {
+        let params = Params::new(16, 4, 2);
+        let mut client = OnlineClient::new(params.clone(), Prf::random(), 1);
+        client.hint_prf_ids.swap(0, 1);
+        let db = vec![0u8; (params.num_entries as usize) * params.entry_size];
+        client.generate_hints(&db).unwrap();
+        assert_eq!(client.hint_prf_ids[0], 0);
+        assert_eq!(client.hint_prf_ids[1], 1);
     }
 
     #[test]
@@ -1171,11 +1206,26 @@ mod tests {
             .position(|hints| !hints.is_empty())
             .map(|idx| idx as u64)
             .expect("expected at least one covered index");
-        let (real_query, _dummy_query, real_hint) =
+        let (real_query, dummy_query, real_hint) =
             client.build_network_queries_with_coverage(index, &coverage).unwrap();
 
         assert!(coverage[index as usize].contains(&(real_hint as u32)));
-        assert_eq!(real_query.id, real_query.id);
+        assert_eq!(real_query.id, dummy_query.id);
+    }
+
+    #[test]
+    fn test_network_queries_with_coverage_rejects_short_coverage() {
+        let params = Params::new(64, 4, 4);
+        let prf = Prf::random();
+        let mut client = OnlineClient::new(params.clone(), prf, 1);
+        let db = vec![7u8; (params.num_entries as usize) * params.entry_size];
+        client.generate_hints(&db).unwrap();
+
+        let coverage = vec![Vec::new(); 1];
+        let err = client
+            .build_network_queries_with_coverage(1, &coverage)
+            .unwrap_err();
+        assert!(matches!(err, ClientError::InvalidIndex));
     }
 
     #[test]

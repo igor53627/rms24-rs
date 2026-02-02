@@ -13,6 +13,7 @@ SEED=${SEED:-42}
 RMS24_COVERAGE_INDEX=${RMS24_COVERAGE_INDEX:-}
 CACHE_DIR=${CACHE_DIR:-"$DATA_ROOT/cache"}
 RMS24_STATE_PATH=${RMS24_STATE_PATH:-}
+STATE_PATH=${RMS24_STATE_PATH:-}
 
 MODES_DEFAULT=("rms24")
 THREADS_DEFAULT=(1 4)
@@ -98,7 +99,7 @@ case "$DATASET" in
 esac
 
 mkdir -p "$CACHE_DIR"
-STATE_PATH=${RMS24_STATE_PATH:-"$CACHE_DIR/hints_${DATASET}_entry${ENTRY_SIZE}_lambda${LAMBDA}_seed${SEED}.bin"}
+STATE_PATH=${STATE_PATH:-"$CACHE_DIR/hints_${DATASET}_entry${ENTRY_SIZE}_lambda${LAMBDA}_seed${SEED}.bin"}
 STATE_STATUS="unknown"
 if [[ -f "$STATE_PATH" ]]; then
   STATE_STATUS="hit"
@@ -146,9 +147,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
-MODES=("${MODES[@]:-${MODES_DEFAULT[@]}}")
-THREADS=("${THREADS[@]:-${THREADS_DEFAULT[@]}}")
-QUERIES=("${QUERIES[@]:-${QUERIES_DEFAULT[@]}}")
+if [[ -z ${MODES+x} ]]; then
+  MODES=()
+fi
+if [[ -z ${THREADS+x} ]]; then
+  THREADS=()
+fi
+if [[ -z ${QUERIES+x} ]]; then
+  QUERIES=()
+fi
+
+if [[ ${#MODES[@]} -eq 0 ]]; then
+  MODES=("${MODES_DEFAULT[@]}")
+fi
+if [[ ${#THREADS[@]} -eq 0 ]]; then
+  THREADS=("${THREADS_DEFAULT[@]}")
+fi
+if [[ ${#QUERIES[@]} -eq 0 ]]; then
+  QUERIES=("${QUERIES_DEFAULT[@]}")
+fi
 
 for mode in "${MODES[@]}"; do
   for threads in "${THREADS[@]}"; do
@@ -172,9 +189,20 @@ for mode in "${MODES[@]}"; do
         "${COVERAGE_FLAG[@]}" \
         > "$run_log" 2>&1
       end_run=$(now_ms)
-      elapsed_ms=$(rg -o "elapsed_ms=\d+" -m 1 "$run_log" | cut -d= -f2 || echo "0")
+      elapsed_ms="null"
+      elapsed_ms_csv=""
+      if command -v rg >/dev/null 2>&1; then
+        if match=$(rg -o "elapsed_ms=\\d+" -m 1 "$run_log"); then
+          elapsed_ms=${match#elapsed_ms=}
+          elapsed_ms_csv=$elapsed_ms
+        else
+          echo "warning: elapsed_ms not found in $run_log" >&2
+        fi
+      else
+        echo "warning: rg not found; elapsed_ms unavailable for $run_log" >&2
+      fi
       log_json "$LOG_CLIENT" "client_run" "$start_run" "$end_run" ",\"dataset\":\"$DATASET\",\"mode\":\"$mode\",\"threads\":$threads,\"query_count\":$qc,\"elapsed_ms_client\":$elapsed_ms"
-      echo "$RUN_ID,$DATASET,$mode,$threads,$qc,$elapsed_ms" >> "$SUMMARY"
+      echo "$RUN_ID,$DATASET,$mode,$threads,$qc,$elapsed_ms_csv" >> "$SUMMARY"
     done
   done
 done

@@ -10,13 +10,13 @@
 
 ---
 
-### Task 0: Expose OnlineClient network query helpers
+## Task 0: Expose OnlineClient network query helpers
 
-**Files:**
+### Files
 - Modify: `src/client.rs`
 - Test: `src/client.rs`
 
-**Step 1: Write the failing tests**
+### Step 1: Write the failing tests
 
 Add to `src/client.rs` tests (near other OnlineClient tests):
 
@@ -40,12 +40,12 @@ fn test_online_client_build_and_consume_network_query() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test client::tests::test_online_client_build_and_consume_network_query`
 Expected: FAIL (missing methods)
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 Add public methods to `OnlineClient`:
 
@@ -86,6 +86,9 @@ pub fn build_network_queries(
         real_subset.swap_remove(pos);
     }
 
+    if self.available_hints.is_empty() {
+        return Err(ClientError::NoValidHint);
+    }
     let dummy_hint = self.available_hints[self.rng.gen_range(0..self.available_hints.len())];
     let dummy_subset = self.build_subset_for_hint(dummy_hint);
 
@@ -121,12 +124,12 @@ pub fn consume_network_reply(
 }
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test client::tests::test_online_client_build_and_consume_network_query`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add src/client.rs
@@ -135,14 +138,14 @@ git commit -m "feat: add online client network query helpers"
 
 ---
 
-### Task 1: Add benchmark protocol types (subset-based)
+## Task 1: Add benchmark protocol types (subset-based)
 
-**Files:**
+### Files
 - Create: `src/bench_proto.rs`
 - Modify: `src/lib.rs`
 - Test: `src/bench_proto.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bench_proto.rs`:
 ```rust
@@ -174,12 +177,12 @@ mod tests {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test bench_proto::tests::test_bincode_roundtrip`
 Expected: FAIL (missing types/module)
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 Create `src/bench_proto.rs`:
 ```rust
@@ -196,7 +199,7 @@ pub struct RunConfig {
     pub dataset_id: String,
     pub mode: Mode,
     pub query_count: u64,
-    pub threads: usize,
+    pub threads: u32,
     pub seed: u64,
 }
 
@@ -218,12 +221,12 @@ Update `src/lib.rs` exports:
 pub mod bench_proto;
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test bench_proto::tests::test_bincode_roundtrip`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add src/bench_proto.rs src/lib.rs
@@ -232,14 +235,14 @@ git commit -m "feat: add benchmark protocol types"
 
 ---
 
-### Task 2: Add TCP framing helpers
+## Task 2: Add TCP framing helpers
 
-**Files:**
+### Files
 - Create: `src/bench_framing.rs`
 - Modify: `src/lib.rs`
 - Test: `src/bench_framing.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bench_framing.rs`:
 ```rust
@@ -256,21 +259,52 @@ mod tests {
         let out = read_frame(&mut cursor).unwrap();
         assert_eq!(out, payload);
     }
+
+    #[test]
+    fn test_frame_rejects_zero_len() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        let mut cursor = std::io::Cursor::new(buf);
+        let err = read_frame(&mut cursor).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn test_write_frame_rejects_oversized_payload() {
+        let payload = vec![0u8; MAX_FRAME_SIZE + 1];
+        let mut buf = Vec::new();
+        let err = write_frame(&mut buf, &payload).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test bench_framing::tests::test_frame_roundtrip`
 Expected: FAIL
 
-**Step 3: Implement framing**
+### Step 3: Implement framing
 
 Create `src/bench_framing.rs`:
 ```rust
 use std::io::{self, Read, Write};
 
+const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024;
+
 pub fn write_frame<W: Write>(mut w: W, payload: &[u8]) -> io::Result<()> {
+    if payload.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "payload size must be > 0",
+        ));
+    }
+    if payload.len() > MAX_FRAME_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("payload size {} exceeds maximum {}", payload.len(), MAX_FRAME_SIZE),
+        ));
+    }
     let len = payload.len() as u32;
     w.write_all(&len.to_le_bytes())?;
     w.write_all(payload)
@@ -280,6 +314,18 @@ pub fn read_frame<R: Read>(mut r: R) -> io::Result<Vec<u8>> {
     let mut len_bytes = [0u8; 4];
     r.read_exact(&mut len_bytes)?;
     let len = u32::from_le_bytes(len_bytes) as usize;
+    if len == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame size must be > 0",
+        ));
+    }
+    if len > MAX_FRAME_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("frame size {} exceeds maximum {}", len, MAX_FRAME_SIZE),
+        ));
+    }
     let mut payload = vec![0u8; len];
     r.read_exact(&mut payload)?;
     Ok(payload)
@@ -291,12 +337,12 @@ Export in `src/lib.rs`:
 pub mod bench_framing;
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test bench_framing::tests::test_frame_roundtrip`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add src/bench_framing.rs src/lib.rs
@@ -305,13 +351,13 @@ git commit -m "feat: add benchmark tcp framing"
 
 ---
 
-### Task 3: Add rms24-server binary (subset-based)
+## Task 3: Add rms24-server binary (subset-based)
 
-**Files:**
+### Files
 - Create: `src/bin/rms24_server.rs`
 - Test: `src/bin/rms24_server.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bin/rms24_server.rs` (test module at bottom):
 ```rust
@@ -334,12 +380,12 @@ mod tests {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test rms24_server::tests::test_parse_args`
 Expected: FAIL
 
-**Step 3: Implement server**
+### Step 3: Implement server
 
 Create `src/bin/rms24_server.rs`:
 ```rust
@@ -367,22 +413,36 @@ struct Args {
 
 fn handle_client(mut stream: TcpStream, server: Arc<Server<InMemoryDb>>) -> io::Result<()> {
     let cfg_bytes = read_frame(&mut stream)?;
-    let _cfg: RunConfig = bincode::deserialize(&cfg_bytes).unwrap();
+    let _cfg: RunConfig = bincode::deserialize(&cfg_bytes)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
     loop {
         let msg = read_frame(&mut stream)?;
-        let query: Query = bincode::deserialize(&msg).unwrap();
+        let query: Query = bincode::deserialize(&msg)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         let rms_query = RmsQuery { id: query.id, subset: query.subset };
-        let reply = server.answer(&rms_query).unwrap();
+        let reply = server
+            .answer(&rms_query)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "query failed"))?;
         let out = Reply { id: reply.id, parity: reply.parity };
-        let out_bytes = bincode::serialize(&out).unwrap();
+        let out_bytes = bincode::serialize(&out)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         write_frame(&mut stream, &out_bytes)?;
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    if args.entry_size == 0 {
+        return Err("entry_size must be >0".into());
+    }
     let db = std::fs::read(&args.db)?;
+    if db.is_empty() {
+        return Err("db must contain at least one entry".into());
+    }
+    if db.len() % args.entry_size != 0 {
+        return Err("entry_size must divide db length".into());
+    }
     let db = InMemoryDb::new(db, args.entry_size)?;
     let server = Server::new(db, args.lambda)?;
     let server = Arc::new(server);
@@ -400,12 +460,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test rms24_server::tests::test_parse_args`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add src/bin/rms24_server.rs
@@ -414,13 +474,13 @@ git commit -m "feat: add rms24 benchmark server"
 
 ---
 
-### Task 4: Add rms24-client binary (subset-based)
+## Task 4: Add rms24-client binary (subset-based)
 
-**Files:**
+### Files
 - Create: `src/bin/rms24_client.rs`
 - Test: `src/bin/rms24_client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bin/rms24_client.rs`:
 ```rust
@@ -443,12 +503,12 @@ mod tests {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test rms24_client::tests::test_parse_args`
 Expected: FAIL
 
-**Step 3: Implement client**
+### Step 3: Implement client
 
 Create `src/bin/rms24_client.rs`:
 ```rust
@@ -459,8 +519,8 @@ use rms24::client::{ClientError, OnlineClient};
 use rms24::params::Params;
 use rms24::prf::Prf;
 use sha3::{Digest, Sha3_256};
-use std::net::TcpStream;
-use std::time::Instant;
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 struct Args {
@@ -475,7 +535,7 @@ struct Args {
     #[arg(long, default_value = "1000")]
     query_count: u64,
     #[arg(long, default_value = "1")]
-    threads: usize,
+    threads: u32,
     #[arg(long, default_value = "0")]
     seed: u64,
     #[arg(long, default_value = "rms24")]
@@ -491,9 +551,35 @@ fn prf_from_seed(seed: u64) -> Prf {
     Prf::new(key)
 }
 
+fn connect_with_timeouts(addr: &str, timeout: Duration) -> io::Result<TcpStream> {
+    let mut last_err = None;
+    for sock in addr.to_socket_addrs()? {
+        match TcpStream::connect_timeout(&sock, timeout) {
+            Ok(stream) => {
+                stream.set_read_timeout(Some(timeout))?;
+                stream.set_write_timeout(Some(timeout))?;
+                return Ok(stream);
+            }
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "failed to resolve socket addresses")
+    }))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    if args.entry_size == 0 {
+        return Err("entry_size must be >0".into());
+    }
     let db = std::fs::read(&args.db)?;
+    if db.is_empty() {
+        return Err("db must contain at least one entry".into());
+    }
+    if db.len() % args.entry_size != 0 {
+        return Err("entry_size must divide db length".into());
+    }
     let num_entries = db.len() / args.entry_size;
     let params = Params::new(num_entries as u64, args.entry_size, args.lambda);
     let prf = if args.seed == 0 { Prf::random() } else { prf_from_seed(args.seed) };
@@ -514,7 +600,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seed: args.seed,
     };
 
-    let mut stream = TcpStream::connect(&args.server)?;
+    let timeout = Duration::from_secs(10);
+    let mut stream = connect_with_timeouts(&args.server, timeout)?;
     let cfg_bytes = bincode::serialize(&cfg)?;
     write_frame(&mut stream, &cfg_bytes)?;
 
@@ -543,12 +630,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test rms24_client::tests::test_parse_args`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add src/bin/rms24_client.rs
@@ -557,12 +644,12 @@ git commit -m "feat: add rms24 benchmark client"
 
 ---
 
-### Task 5: Add benchmark harness script
+## Task 5: Add benchmark harness script
 
-**Files:**
+### Files
 - Create: `scripts/bench_hsiao.sh`
 
-**Step 1: Write script skeleton**
+### Step 1: Write script skeleton
 
 Create `scripts/bench_hsiao.sh` with:
 ```bash
@@ -579,7 +666,7 @@ echo "run_id=$RUN_ID" | tee "$RUN_DIR/env.txt"
 # TODO: add env capture, dataset download, server/client runs
 ```
 
-**Step 2: Commit skeleton**
+### Step 2: Commit skeleton
 
 ```bash
 git add scripts/bench_hsiao.sh
@@ -588,27 +675,27 @@ git commit -m "feat: add benchmark harness script skeleton"
 
 ---
 
-### Task 6: Fill harness steps (download, run, report)
+## Task 6: Fill harness steps (download, run, report)
 
-**Files:**
+### Files
 - Modify: `scripts/bench_hsiao.sh`
 
-**Step 1: Add download + checksum steps**
+### Step 1: Add download + checksum steps
 - Use URLs from `plinko-rs/docs/data_format.md`
 - Write SHA256s to `$RUN_DIR`
 
-**Step 2: Add server start/stop**
+### Step 2: Add server start/stop
 - Start `rms24-server` in background, save PID
 - Trap to kill server on exit
 
-**Step 3: Add client runs**
+### Step 3: Add client runs
 - Run 1k/10k queries, threads 1 and 4
 - Save JSONL logs to `$RUN_DIR`
 
-**Step 4: Add summary CSV + report.md**
+### Step 4: Add summary CSV + report.md
 - Parse JSONL with `python` or `jq`
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 git add scripts/bench_hsiao.sh

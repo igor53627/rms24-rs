@@ -11,10 +11,10 @@ pub struct RunConfig {
     pub dataset_id: String,
     pub mode: Mode,
     pub query_count: u64,
-    pub threads: usize,
+    pub threads: u32,
     pub seed: u64,
-    pub batch_size: usize,
-    pub max_batch_queries: usize,
+    pub batch_size: u32,
+    pub max_batch_queries: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

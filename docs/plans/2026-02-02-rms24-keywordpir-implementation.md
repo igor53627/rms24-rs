@@ -10,14 +10,14 @@
 
 ---
 
-### Task 1: Add keyword_pir module skeleton + mapping parsing
+## Task 1: Add keyword_pir module skeleton + mapping parsing
 
-**Files:**
+### Files
 - Create: `src/keyword_pir/mod.rs`
 - Modify: `src/lib.rs`
 - Test: `src/keyword_pir/mod.rs`
 
-**Step 1: Write the failing tests**
+### Step 1: Write the failing tests
 
 Create `src/keyword_pir/mod.rs` with tests first:
 
@@ -57,12 +57,12 @@ mod tests {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test keyword_pir::tests::test_parse_mapping_record_account`
 Expected: FAIL (module + functions missing).
 
-**Step 3: Implement minimal module**
+### Step 3: Implement minimal module
 
 In `src/keyword_pir/mod.rs`:
 
@@ -110,12 +110,12 @@ Update `src/lib.rs`:
 pub mod keyword_pir;
 ```
 
-**Step 4: Run tests to verify they pass**
+### Step 4: Run tests to verify they pass
 
 Run: `cargo test keyword_pir::tests::test_parse_mapping_record_account`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/keyword_pir/mod.rs src/lib.rs
@@ -124,13 +124,13 @@ jj describe -m "feat: add keyword_pir module skeleton and mapping parse"
 
 ---
 
-### Task 2: Implement cuckoo hashing core + parameters
+## Task 2: Implement cuckoo hashing core + parameters
 
-**Files:**
+### Files
 - Modify: `src/keyword_pir/mod.rs`
 - Test: `src/keyword_pir/mod.rs`
 
-**Step 1: Write the failing tests**
+### Step 1: Write the failing tests
 
 Add tests in `src/keyword_pir/mod.rs`:
 
@@ -156,12 +156,12 @@ fn test_cuckoo_insert_and_lookup() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test keyword_pir::tests::test_cuckoo_insert_and_lookup`
 Expected: FAIL (types/impls missing).
 
-**Step 3: Implement cuckoo core**
+### Step 3: Implement cuckoo core
 
 Add types and helpers:
 
@@ -219,7 +219,7 @@ impl CuckooTable {
     pub fn insert(&mut self, key: &[u8], value: [u8; 40]) -> Result<(), String> {
         let key_hash = hash_key(key);
         let slot = CuckooSlot { key_hash, value };
-        let positions = cuckoo_positions(key, &self.cfg);
+        let positions = cuckoo_positions(&key_hash, &self.cfg);
         for &bucket in &positions {
             for i in 0..self.cfg.bucket_size {
                 let idx = bucket * self.cfg.bucket_size + i;
@@ -272,14 +272,14 @@ impl CuckooTable {
 ```
 
 (Implement `hash_key` using `Sha3_256` of the key bytes.)
-(If the evicted key derivation is needed, replace `cur_value[..]` with a stored key hash; refine in Task 3.)
+(Use the key hash as the canonical input to `cuckoo_positions` so insert/eviction/lookup are consistent.)
 
-**Step 4: Run tests to verify they pass**
+### Step 4: Run tests to verify they pass
 
 Run: `cargo test keyword_pir::tests::test_cuckoo_insert_and_lookup`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/keyword_pir/mod.rs
@@ -288,14 +288,14 @@ jj describe -m "feat: add cuckoo hashing core for keyword_pir"
 
 ---
 
-### Task 3: Builder binary for keywordpir tables
+## Task 3: Builder binary for KeywordPIR tables
 
-**Files:**
+### Files
 - Create: `src/bin/rms24_keywordpir_build.rs`
 - Modify: `src/keyword_pir/mod.rs`
 - Test: `src/bin/rms24_keywordpir_build.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add parse test in `src/bin/rms24_keywordpir_build.rs`:
 
@@ -314,12 +314,12 @@ fn test_parse_args() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test rms24_keywordpir_build::tests::test_parse_args`
 Expected: FAIL (binary missing).
 
-**Step 3: Implement builder**
+### Step 3: Implement builder
 
 Create builder binary with:
 - Inputs: `--db`, `--account-mapping`, `--storage-mapping`, `--out`, `--bucket-size`, `--num-hashes`, `--max-kicks`, `--seed`.
@@ -339,12 +339,12 @@ Metadata fields:
 - `entry_size`, `num_entries`, `bucket_size`, `num_buckets`, `num_hashes`, `max_kicks`, `seed`
 - `collision_entry_size`, `collision_count`
 
-**Step 4: Run tests to verify they pass**
+### Step 4: Run tests to verify they pass
 
 Run: `cargo test rms24_keywordpir_build::tests::test_parse_args`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bin/rms24_keywordpir_build.rs src/keyword_pir/mod.rs
@@ -353,13 +353,13 @@ jj describe -m "feat: add keywordpir builder binary"
 
 ---
 
-### Task 4: KeywordPIR client wrapper + collision handling
+## Task 4: KeywordPIR client wrapper + collision handling
 
-**Files:**
+### Files
 - Modify: `src/keyword_pir/mod.rs`
 - Test: `src/keyword_pir/mod.rs`
 
-**Step 1: Write failing tests**
+### Step 1: Write failing tests
 
 Add tests to `src/keyword_pir/mod.rs`:
 
@@ -378,12 +378,12 @@ fn test_keywordpir_query_returns_matching_tag() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test keyword_pir::tests::test_keywordpir_query_returns_matching_tag`
 Expected: FAIL.
 
-**Step 3: Implement KeywordPirClient**
+### Step 3: Implement KeywordPirClient
 
 In `src/keyword_pir/mod.rs`:
 - Add `KeywordPirParams` (wraps `CuckooConfig` + `entry_size`).
@@ -394,12 +394,12 @@ In `src/keyword_pir/mod.rs`:
 - Add tag verification from entry bytes: account tag at 24..32 or storage tag at 32..40 depending on key length.
 - Collision handling: if tag in collision set, fall back to `query_collision` which uses collision table (entry size 72) and validates `key_hash`.
 
-**Step 4: Run tests to verify they pass**
+### Step 4: Run tests to verify they pass
 
 Run: `cargo test keyword_pir::tests::test_keywordpir_query_returns_matching_tag`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/keyword_pir/mod.rs
@@ -408,15 +408,15 @@ jj describe -m "feat: add keywordpir client wrapper"
 
 ---
 
-### Task 5: Wire benchmark client for KeywordPIR mode
+## Task 5: Wire benchmark client for KeywordPIR mode
 
-**Files:**
+### Files
 - Modify: `src/bin/rms24_client.rs`
 - Modify: `docs/FEATURE_FLAGS.md`
 - Modify: `docs/ARCHITECTURE.md`
 - Test: `src/bin/rms24_client.rs`
 
-**Step 1: Write failing tests**
+### Step 1: Write failing tests
 
 Add tests in `src/bin/rms24_client.rs`:
 
@@ -436,12 +436,12 @@ fn test_parse_args_keywordpir_flags() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test rms24_client::tests::test_parse_args_keywordpir_flags`
 Expected: FAIL (missing args).
 
-**Step 3: Implement KeywordPIR mode**
+### Step 3: Implement KeywordPIR mode
 
 Update `Args` with:
 - `--keywordpir-metadata <path>` (required in keywordpir mode)
@@ -455,12 +455,12 @@ Implementation changes:
 - Use `KeywordPirClient` to compute candidate indices and push real+dummy RMS24 queries for each index.
 - Keep batching logic intact by pushing multiple pending items per keyword query.
 
-**Step 4: Run tests to verify they pass**
+### Step 4: Run tests to verify they pass
 
 Run: `cargo test rms24_client::tests::test_parse_args_keywordpir_flags`
 Expected: PASS
 
-**Step 5: Update docs**
+### Step 5: Update docs
 
 Add to `docs/FEATURE_FLAGS.md`:
 - KeywordPIR flags and required inputs
@@ -468,7 +468,7 @@ Add to `docs/FEATURE_FLAGS.md`:
 Add to `docs/ARCHITECTURE.md`:
 - KeywordPIR module + builder pipeline
 
-**Step 6: Commit**
+### Step 6: Commit
 
 ```bash
 jj add src/bin/rms24_client.rs docs/FEATURE_FLAGS.md docs/ARCHITECTURE.md

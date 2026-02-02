@@ -115,9 +115,19 @@ impl GpuHintGenerator {
         // Validate input
         let expected_size = params.num_entries as usize * ENTRY_SIZE;
         if entries.len() != expected_size {
+            eprintln!(
+                "gpu_generate_hints: entries_len={} expected_len={}",
+                entries.len(),
+                expected_size
+            );
             return Err(cudarc::driver::DriverError::InvalidConfiguration);
         }
         if hint_meta.len() != params.total_hints as usize {
+            eprintln!(
+                "gpu_generate_hints: hint_meta_len={} expected_len={}",
+                hint_meta.len(),
+                params.total_hints
+            );
             return Err(cudarc::driver::DriverError::InvalidConfiguration);
         }
 

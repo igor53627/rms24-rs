@@ -265,7 +265,9 @@ def benchmark_large_scale():
             results.append(result)
         except Exception as e:
             # Broad catch to keep batch benchmarking across configs.
+            import traceback
             print(f"Failed: {e}")
+            print(traceback.format_exc())
             results.append({"error": str(e)})
     
     print("\n" + "="*60)
@@ -289,7 +291,8 @@ def main(
     large: bool = False,
 ):
     if large:
-        benchmark_large_scale.remote()
+        result = benchmark_large_scale.remote()
+        print(f"\nResult: {result}")
     else:
         result = benchmark_kernels.remote(
             num_entries=num_entries,

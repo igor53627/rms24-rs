@@ -10,13 +10,13 @@
 
 ---
 
-### Task 1: Fix `TimingCounters::should_log` logging at count 0
+## Task 1: Fix `TimingCounters::should_log` logging at count 0
 
 **Files:**
 - Modify: `tests/bench_timing_test.rs`
 - Modify: `src/bench_timing.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `tests/bench_timing_test.rs`:
 
@@ -28,12 +28,12 @@ fn test_should_log_skips_zero_count() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_should_log_skips_zero_count --test bench_timing_test`
 Expected: FAIL (currently logs at count 0).
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 Update `src/bench_timing.rs`:
 
@@ -42,12 +42,12 @@ let count = *self.counts.get(phase).unwrap_or(&0);
 self.log_every > 0 && count > 0 && count % self.log_every == 0
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_should_log_skips_zero_count --test bench_timing_test`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add tests/bench_timing_test.rs src/bench_timing.rs
@@ -56,13 +56,13 @@ jj describe -m "fix: avoid logging timing at count 0"
 
 ---
 
-### Task 2: Add TCP read/write timeouts in `rms24_client`
+## Task 2: Add TCP read/write timeouts in `rms24_client`
 
 **Files:**
 - Modify: `src/bin/rms24_client.rs`
 - Test: `src/bin/rms24_client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `src/bin/rms24_client.rs` tests:
 
@@ -89,12 +89,12 @@ fn test_connect_with_timeouts_sets_read_write() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_connect_with_timeouts_sets_read_write --bin rms24_client`
 Expected: FAIL (helper missing).
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 Add helper + default timeout in `src/bin/rms24_client.rs`:
 
@@ -116,12 +116,12 @@ let timeout = Duration::from_secs(DEFAULT_TCP_TIMEOUT_SECS);
 let mut stream = connect_with_timeouts(&args.server, timeout)?;
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_connect_with_timeouts_sets_read_write --bin rms24_client`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bin/rms24_client.rs
@@ -130,13 +130,13 @@ jj describe -m "fix: set tcp read/write timeouts in client"
 
 ---
 
-### Task 3: Replace `unwrap()` on server deserialization with proper errors
+## Task 3: Replace `unwrap()` on server deserialization with proper errors
 
 **Files:**
 - Modify: `src/bin/rms24_server.rs`
 - Test: `src/bin/rms24_server.rs`
 
-**Step 1: Write the failing tests**
+### Step 1: Write the failing tests
 
 Add to `src/bin/rms24_server.rs` tests:
 
@@ -154,12 +154,12 @@ fn test_parse_client_frame_invalid_bytes() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_parse_run_config_invalid_bytes --bin rms24_server`
 Expected: FAIL (helpers missing).
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 Add helpers in `src/bin/rms24_server.rs`:
 
@@ -181,12 +181,12 @@ let cfg: RunConfig = parse_run_config(&cfg_bytes)?;
 let frame: ClientFrame = parse_client_frame(&msg)?;
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_parse_run_config_invalid_bytes --bin rms24_server`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/bin/rms24_server.rs
@@ -195,13 +195,13 @@ jj describe -m "fix: handle server deserialize errors without panic"
 
 ---
 
-### Task 4: Filter coverage candidates to available hints
+## Task 4: Filter coverage candidates to available hints
 
 **Files:**
 - Modify: `src/client.rs`
 - Test: `src/client.rs`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `client::tests` in `src/client.rs`:
 
@@ -248,12 +248,12 @@ fn test_network_queries_with_coverage_filters_unavailable_hints() {
 }
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `cargo test test_network_queries_with_coverage_filters_unavailable_hints --lib`
 Expected: FAIL (can select removed hint).
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 Update `build_network_queries_with_coverage` in `src/client.rs`:
 
@@ -270,12 +270,12 @@ if candidates.is_empty() {
 }
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `cargo test test_network_queries_with_coverage_filters_unavailable_hints --lib`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add src/client.rs
@@ -284,21 +284,21 @@ jj describe -m "fix: avoid selecting unavailable hints from coverage index"
 
 ---
 
-### Task 5: Serialize env-var test in `rms24_client` tests
+## Task 5: Serialize env-var test in `rms24_client` tests
 
 **Files:**
 - Modify: `src/bin/rms24_client.rs`
 
-**Step 1: Update test guard**
+### Step 1: Update test guard
 
 Add a shared mutex guard (using `OnceLock`) and lock it in `test_coverage_env_enables_index` so env var usage can’t race with other tests.
 
-**Step 2: Run targeted test**
+### Step 2: Run targeted test
 
 Run: `cargo test test_coverage_env_enables_index --bin rms24_client`
 Expected: PASS
 
-**Step 3: Commit**
+### Step 3: Commit
 
 ```bash
 jj add src/bin/rms24_client.rs
@@ -307,13 +307,13 @@ jj describe -m "test: guard RMS24_COVERAGE_INDEX env var"
 
 ---
 
-### Task 6: Guard `forge_v2` for zero subset size (S=0)
+## Task 6: Guard `forge_v2` for zero subset size (S=0)
 
 **Files:**
 - Modify: `python/test_kernel_correctness.py`
 - Modify: `python/forge_v2.py`
 
-**Step 1: Write the failing test**
+### Step 1: Write the failing test
 
 Add to `python/test_kernel_correctness.py`:
 
@@ -330,12 +330,12 @@ def test_zero_subset_size_returns_zero(self):
     self.assertTrue(torch.equal(parities, expected))
 ```
 
-**Step 2: Run test to verify it fails**
+### Step 2: Run test to verify it fails
 
 Run: `KERNEL_MODULE=forge_v2 python -m unittest python.test_kernel_correctness.TestHintGenKernelCorrectness.test_zero_subset_size_returns_zero`
 Expected: FAIL (indexing gathered[:,0,:] panics).
 
-**Step 3: Write minimal implementation**
+### Step 3: Write minimal implementation
 
 Update `python/forge_v2.py`:
 
@@ -344,12 +344,12 @@ if gathered.shape[1] == 0:
     return torch.zeros(gathered.shape[0], gathered.shape[2], dtype=entries.dtype, device=entries.device)
 ```
 
-**Step 4: Run test to verify it passes**
+### Step 4: Run test to verify it passes
 
 Run: `KERNEL_MODULE=forge_v2 python -m unittest python.test_kernel_correctness.TestHintGenKernelCorrectness.test_zero_subset_size_returns_zero`
 Expected: PASS
 
-**Step 5: Commit**
+### Step 5: Commit
 
 ```bash
 jj add python/test_kernel_correctness.py python/forge_v2.py
@@ -358,7 +358,7 @@ jj describe -m "fix: handle zero subset size in forge_v2"
 
 ---
 
-### Task 7: Fix documentation inconsistencies and plan typos
+## Task 7: Fix documentation inconsistencies and plan typos
 
 **Files:**
 - Modify: `docs/reports/2026-02-01-rms24-keywordpir-full-benchmark.md`
@@ -367,18 +367,18 @@ jj describe -m "fix: handle zero subset size in forge_v2"
 - Modify: `docs/plans/2026-02-01-rms24-client-query-optimizations-implementation.md`
 - Modify: `docs/plans/2026-02-02-rms24-keywordpir-implementation.md`
 
-**Step 1: Update benchmark report thread counts**
+### Step 1: Update benchmark report thread counts
 
 Make summary/method match the tables (RMS24: 1 & 4 threads; KeywordPIR: 1 & 64 threads).
 
-**Step 2: Fix incorrect cargo test commands in runtime instrumentation plan**
+### Step 2: Fix incorrect cargo test commands in runtime instrumentation plan
 
 Replace `cargo test tests/bench_timing_test.rs::test_timing_summary_format` with:
 - `cargo test test_timing_summary_format --test bench_timing_test`
 
 Apply the same pattern to other test commands in that plan.
 
-**Step 3: Fix tautological assertion in coverage index plan**
+### Step 3: Fix tautological assertion in coverage index plan
 
 Change:
 
@@ -392,16 +392,16 @@ to:
 assert_eq!(real_query.id, dummy_query.id);
 ```
 
-**Step 4: Clarify cached-vs-uncached test in client query plan**
+### Step 4: Clarify cached-vs-uncached test in client query plan
 
 Update `test_query_bytes_equivalent_with_cache` to explicitly warm the cache (call `get_subset_for_hint` before `build_network_queries`) so the cached path is exercised.
 
-**Step 5: Fix keywordpir plan correctness**
+### Step 5: Fix KeywordPIR plan correctness
 
 - `find_candidate` should verify key/tag match before returning a candidate.
 - Kick loop should handle empty slots without `unwrap()` panics (insert and return if empty).
 
-**Step 6: Commit**
+### Step 6: Commit
 
 ```bash
 jj add docs/reports/2026-02-01-rms24-keywordpir-full-benchmark.md \
@@ -414,14 +414,14 @@ jj describe -m "docs: fix report inconsistencies and plan issues"
 
 ---
 
-### Task 8: Final verification + rollup commit (if you want a single commit)
+## Task 8: Final verification + rollup commit (if you want a single commit)
 
-**Step 1: Run full test pass**
+### Step 1: Run full test pass
 
 Run: `cargo test`
 Expected: PASS
 
-**Step 2: Commit (optional rollup instead of task commits)**
+### Step 2: Commit (optional rollup instead of task commits)
 
 ```bash
 jj add -A

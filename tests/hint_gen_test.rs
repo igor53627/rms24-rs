@@ -106,8 +106,8 @@ fn test_parities_deterministic_with_same_prf() {
     let prf_key = [0x11u8; 32];
     let db = vec![0x42u8; 100 * 40];
 
-    let mut client1 = Client::with_prf(params.clone(), rms24::prf::Prf::new(prf_key));
-    let mut client2 = Client::with_prf(params, rms24::prf::Prf::new(prf_key));
+    let mut client1 = Client::with_prf(params.clone(), Prf::new(prf_key));
+    let mut client2 = Client::with_prf(params, Prf::new(prf_key));
 
     client1.generate_hints(&db);
     client2.generate_hints(&db);
