@@ -34,6 +34,134 @@ pub fn tag_for_key(key: &[u8]) -> Option<Tag> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CuckooConfig {
+    pub num_buckets: usize,
+    pub bucket_size: usize,
+    pub num_hashes: usize,
+    pub max_kicks: usize,
+    pub seed: u64,
+}
+
+impl CuckooConfig {
+    pub fn new(
+        num_buckets: usize,
+        bucket_size: usize,
+        num_hashes: usize,
+        max_kicks: usize,
+        seed: u64,
+    ) -> Self {
+        Self {
+            num_buckets,
+            bucket_size,
+            num_hashes,
+            max_kicks,
+            seed,
+        }
+    }
+}
+
+pub fn cuckoo_positions(key: &[u8], cfg: &CuckooConfig) -> Vec<usize> {
+    (0..cfg.num_hashes)
+        .map(|i| hash_with_seed(key, cfg.seed.wrapping_add(i as u64)) % cfg.num_buckets)
+        .collect()
+}
+
+fn hash_with_seed(key: &[u8], seed: u64) -> usize {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(seed.to_le_bytes());
+    hasher.update(key);
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    u64::from_le_bytes(bytes) as usize
+}
+
+fn hash_key(key: &[u8]) -> [u8; 32] {
+    use sha3::{Digest, Sha3_256};
+    let mut hasher = Sha3_256::new();
+    hasher.update(key);
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest[..]);
+    out
+}
+
+#[derive(Clone, Debug)]
+pub struct CuckooSlot {
+    pub key_hash: [u8; 32],
+    pub value: [u8; 40],
+}
+
+#[derive(Clone, Debug)]
+pub struct CuckooTable {
+    cfg: CuckooConfig,
+    slots: Vec<Option<CuckooSlot>>,
+}
+
+impl CuckooTable {
+    pub fn new(cfg: CuckooConfig) -> Self {
+        let total = cfg.num_buckets * cfg.bucket_size;
+        Self {
+            cfg,
+            slots: vec![None; total],
+        }
+    }
+
+    pub fn insert(&mut self, key: &[u8], value: [u8; 40]) -> Result<(), String> {
+        let key_hash = hash_key(key);
+        let slot = CuckooSlot { key_hash, value };
+        let positions = cuckoo_positions(&key_hash, &self.cfg);
+        for &bucket in &positions {
+            for i in 0..self.cfg.bucket_size {
+                let idx = bucket * self.cfg.bucket_size + i;
+                if self.slots[idx].is_none() {
+                    self.slots[idx] = Some(slot);
+                    return Ok(());
+                }
+            }
+        }
+        let mut cur_slot = slot;
+        let mut cur_bucket = positions[0];
+        for kick in 0..self.cfg.max_kicks {
+            let idx = cur_bucket * self.cfg.bucket_size + (kick % self.cfg.bucket_size);
+            let evicted = self.slots[idx].replace(cur_slot);
+            let evicted = match evicted {
+                Some(evicted) => evicted,
+                None => return Ok(()),
+            };
+            cur_slot = evicted;
+            let evicted_positions = cuckoo_positions(&cur_slot.key_hash, &self.cfg);
+            cur_bucket = evicted_positions[0];
+            for i in 0..self.cfg.bucket_size {
+                let cand = cur_bucket * self.cfg.bucket_size + i;
+                if self.slots[cand].is_none() {
+                    self.slots[cand] = Some(cur_slot);
+                    return Ok(());
+                }
+            }
+        }
+        Err("cuckoo insertion failed".into())
+    }
+
+    pub fn find_candidate(&self, key: &[u8]) -> Option<[u8; 40]> {
+        let key_hash = hash_key(key);
+        let positions = cuckoo_positions(&key_hash, &self.cfg);
+        for &bucket in &positions {
+            for i in 0..self.cfg.bucket_size {
+                let idx = bucket * self.cfg.bucket_size + i;
+                if let Some(slot) = &self.slots[idx] {
+                    if slot.key_hash == key_hash {
+                        return Some(slot.value);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +193,25 @@ mod tests {
         let account_tag = tag_for_key(&account_key).unwrap();
         let storage_tag = tag_for_key(&storage_key).unwrap();
         assert_ne!(account_tag.0, storage_tag.0);
+    }
+
+    #[test]
+    fn test_cuckoo_positions_deterministic() {
+        let key = vec![0x55u8; 20];
+        let cfg = CuckooConfig::new(16, 2, 2, 32, 123);
+        let a = cuckoo_positions(&key, &cfg);
+        let b = cuckoo_positions(&key, &cfg);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_cuckoo_insert_and_lookup() {
+        let cfg = CuckooConfig::new(8, 2, 2, 32, 7);
+        let mut table = CuckooTable::new(cfg);
+        let key = vec![0x11u8; 20];
+        let value = [0xAAu8; 40];
+        table.insert(&key, value).unwrap();
+        let got = table.find_candidate(&key).unwrap();
+        assert_eq!(got, value);
     }
 }
