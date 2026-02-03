@@ -3,15 +3,18 @@ use rms24::bench_framing::{read_frame, write_frame};
 use rms24::bench_proto::{BatchRequest, ClientFrame, Mode, Query, Reply, RunConfig, ServerFrame};
 use rms24::bench_timing::TimingCounters;
 use rms24::client::OnlineClient;
-use rms24::keyword_pir::{parse_mapping_record, CuckooConfig, KeywordPirClient, KeywordPirParams};
+use rms24::keyword_pir::{
+    parse_mapping_record, tag_for_key, CuckooConfig, KeywordPirClient, KeywordPirParams,
+};
 use rms24::params::Params;
 use rms24::prf::Prf;
 use rms24::schema40::{Tag, TAG_SIZE};
 use sha3::{Digest, Sha3_256};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const DEFAULT_TCP_TIMEOUT_SECS: u64 = 60;
@@ -274,6 +277,17 @@ fn build_round_robin_keys(
     Ok(out)
 }
 
+fn buckets_for_entries(count: usize, bucket_size: usize) -> usize {
+    (count + bucket_size - 1) / bucket_size
+}
+
+fn collision_db_path(metadata_path: &Path) -> PathBuf {
+    metadata_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("keywordpir-collision-db.bin")
+}
+
 fn coverage_enabled(args: &Args) -> bool {
     if args.coverage_index {
         return true;
@@ -395,6 +409,67 @@ enum PendingKind {
     Dummy,
 }
 
+struct KeywordPendingItem {
+    id: u64,
+    query: Query,
+    positions: Vec<u64>,
+    hint_ids: Vec<Option<usize>>,
+}
+
+fn build_subsets_for_positions(
+    online_client: &mut OnlineClient,
+    coverage: Option<&Vec<Vec<u32>>>,
+    positions: &[u64],
+) -> Result<(Vec<Vec<(u32, u32)>>, Vec<Option<usize>>), Box<dyn std::error::Error>> {
+    let mut subsets = Vec::with_capacity(positions.len() * 2);
+    let mut hint_ids = Vec::with_capacity(positions.len() * 2);
+    for pos in positions {
+        let (real_query, dummy_query, real_hint) = match coverage {
+            Some(coverage) => online_client.build_network_queries_with_coverage(*pos, coverage)?,
+            None => online_client.build_network_queries(*pos)?,
+        };
+        subsets.push(real_query.subset);
+        hint_ids.push(Some(real_hint));
+        subsets.push(dummy_query.subset);
+        hint_ids.push(None);
+    }
+    Ok((subsets, hint_ids))
+}
+
+fn build_keywordpir_pending(
+    keyword_client: &KeywordPirClient,
+    online_client: &mut OnlineClient,
+    coverage: Option<&Vec<Vec<u32>>>,
+    key: &[u8],
+    query_id: u64,
+) -> Result<KeywordPendingItem, Box<dyn std::error::Error>> {
+    let positions: Vec<u64> = keyword_client
+        .positions_for_key(key)
+        .into_iter()
+        .map(|pos| pos as u64)
+        .collect();
+    if positions.is_empty() {
+        let tag_hint = tag_for_key(key)
+            .map(|tag| format!("tag {:?}", tag))
+            .unwrap_or_else(|| format!("len {}", key.len()));
+        return Err(format!("keywordpir positions empty ({})", tag_hint).into());
+    }
+    let (subsets, hint_ids) = build_subsets_for_positions(online_client, coverage, &positions)?;
+    if hint_ids.len() != positions.len() * 2 {
+        return Err("keywordpir subset positions mismatch".into());
+    }
+    let query = Query::KeywordPir {
+        id: query_id,
+        subsets,
+    };
+    Ok(KeywordPendingItem {
+        id: query_id,
+        query,
+        positions,
+        hint_ids,
+    })
+}
+
 fn flush_batch(
     stream: &mut TcpStream,
     pending: &mut Vec<PendingItem>,
@@ -444,7 +519,7 @@ fn flush_batch(
 
     for (item, reply) in batch.into_iter().zip(replies.into_iter()) {
         match (item.kind, reply) {
-            (PendingKind::Real { index, hint }, Reply::Ok { parity, .. }) => {
+            (PendingKind::Real { index, hint }, Reply::Rms24 { parity, .. }) => {
                 let decode_start = Instant::now();
                 if let Some(_) = coverage {
                     let _ = client.decode_reply_static(hint, parity)?;
@@ -453,9 +528,143 @@ fn flush_batch(
                 }
                 record("decode", decode_start.elapsed().as_micros() as u64);
             }
-            (_, Reply::Ok { .. }) => {}
+            (_, Reply::Rms24 { .. }) => {}
+            (_, Reply::KeywordPir { .. }) => {
+                return Err("unexpected keywordpir reply".into())
+            }
             (_, Reply::Error { message, .. }) => return Err(message.into()),
         }
+    }
+    Ok(())
+}
+
+fn flush_keywordpir_batch(
+    stream: &mut TcpStream,
+    pending: &mut Vec<KeywordPendingItem>,
+    batch_size: usize,
+    client: &mut OnlineClient,
+    coverage_enabled: bool,
+    record: &mut impl FnMut(&str, u64),
+) -> Result<(), Box<dyn std::error::Error>> {
+    let take = batch_size.min(pending.len());
+    if take == 0 {
+        return Ok(());
+    }
+    let batch: Vec<KeywordPendingItem> = pending.drain(0..take).collect();
+    let queries: Vec<Query> = batch.iter().map(|p| p.query.clone()).collect();
+    let frame = if queries.len() == 1 {
+        ClientFrame::Query(queries[0].clone())
+    } else {
+        ClientFrame::BatchRequest(BatchRequest { queries })
+    };
+
+    let serialize_start = Instant::now();
+    let bytes = bincode::serialize(&frame)?;
+    record("serialize", serialize_start.elapsed().as_micros() as u64);
+    let write_start = Instant::now();
+    write_frame(&mut *stream, &bytes)?;
+    record("write_frame", write_start.elapsed().as_micros() as u64);
+    let read_start = Instant::now();
+    let reply_bytes = read_frame(&mut *stream)?;
+    record("read_frame", read_start.elapsed().as_micros() as u64);
+    let deserialize_start = Instant::now();
+    let reply_frame: ServerFrame = bincode::deserialize(&reply_bytes)?;
+    record("deserialize", deserialize_start.elapsed().as_micros() as u64);
+
+    let replies = match reply_frame {
+        ServerFrame::Reply(reply) => vec![reply],
+        ServerFrame::BatchReply(batch) => batch.replies,
+        ServerFrame::Error { message } => return Err(message.into()),
+    };
+    if replies.len() != batch.len() {
+        return Err(format!(
+            "batch reply count {} does not match request count {}",
+            replies.len(),
+            batch.len()
+        )
+        .into());
+    }
+
+    for (item, reply) in batch.into_iter().zip(replies.into_iter()) {
+        match reply {
+            Reply::KeywordPir { id, parities } => {
+                if id != item.id {
+                    return Err(format!(
+                        "keywordpir reply id {} does not match request {}",
+                        id, item.id
+                    )
+                    .into());
+                }
+                if parities.len() != item.hint_ids.len() {
+                    return Err("keywordpir reply parity count mismatch".into());
+                }
+                for (idx, (hint, parity)) in item
+                    .hint_ids
+                    .iter()
+                    .zip(parities.into_iter())
+                    .enumerate()
+                {
+                    let Some(real_hint) = hint else { continue };
+                    let pos = item
+                        .positions
+                        .get(idx / 2)
+                        .ok_or("keywordpir reply position mismatch")?;
+                    let decode_start = Instant::now();
+                    if coverage_enabled {
+                        let _ = client.decode_reply_static(*real_hint, parity)?;
+                    } else {
+                        let _ = client.consume_network_reply(*pos, *real_hint, parity)?;
+                    }
+                    record("decode", decode_start.elapsed().as_micros() as u64);
+                }
+            }
+            Reply::Rms24 { .. } => return Err("unexpected rms24 reply".into()),
+            Reply::Error { message, .. } => return Err(message.into()),
+        }
+    }
+
+    Ok(())
+}
+
+fn run_keywordpir_keys(
+    stream: &mut TcpStream,
+    client: &mut OnlineClient,
+    keyword_client: &KeywordPirClient,
+    coverage: Option<&Vec<Vec<u32>>>,
+    record: &mut impl FnMut(&str, u64),
+    keys: &[Vec<u8>],
+    batch_size: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut pending: Vec<KeywordPendingItem> = Vec::new();
+    let mut query_id = 0u64;
+    for key in keys {
+        let build_start = Instant::now();
+        let item =
+            build_keywordpir_pending(keyword_client, client, coverage, key, query_id)?;
+        record("build_query", build_start.elapsed().as_micros() as u64);
+        query_id = query_id.wrapping_add(1);
+        pending.push(item);
+
+        if pending.len() >= batch_size {
+            flush_keywordpir_batch(
+                stream,
+                &mut pending,
+                batch_size,
+                client,
+                coverage.is_some(),
+                record,
+            )?;
+        }
+    }
+    while !pending.is_empty() {
+        flush_keywordpir_batch(
+            stream,
+            &mut pending,
+            batch_size,
+            client,
+            coverage.is_some(),
+            record,
+        )?;
     }
     Ok(())
 }
@@ -468,12 +677,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => Mode::Rms24,
     };
     let is_keywordpir = matches!(mode, Mode::KeywordPir);
-    let keywordpir_metadata = if is_keywordpir {
+    let keywordpir_metadata_path = if is_keywordpir {
         let path = args
             .keywordpir_metadata
             .as_deref()
             .ok_or("keywordpir-metadata required for keywordpir mode")?;
-        let metadata = parse_keywordpir_metadata(Path::new(path))?;
+        Some(PathBuf::from(path))
+    } else {
+        None
+    };
+    let keywordpir_metadata = if is_keywordpir {
+        let path = keywordpir_metadata_path
+            .as_ref()
+            .ok_or("keywordpir metadata path missing")?;
+        let metadata = parse_keywordpir_metadata(path)?;
         if metadata.entry_size != args.entry_size {
             return Err(format!(
                 "keywordpir metadata entry_size {} does not match --entry-size {}",
@@ -513,7 +730,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut keyword_client: Option<KeywordPirClient> = None;
     let mut keyword_keys: Vec<Vec<u8>> = Vec::new();
+    let mut collision_tags_set: Option<HashSet<Tag>> = None;
+    let mut collision_keyword_client: Option<KeywordPirClient> = None;
+    let mut collision_client: Option<OnlineClient> = None;
+    let mut collision_stream: Option<TcpStream> = None;
     if let Some(metadata) = keywordpir_metadata {
+        if metadata.bucket_size == 0 {
+            return Err("keywordpir metadata bucket_size must be >0".into());
+        }
         if metadata.collision_entry_size == 0 {
             return Err("keywordpir metadata collision_entry_size must be >0".into());
         }
@@ -569,9 +793,67 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+            if !tags.is_empty() {
+                let metadata_path = keywordpir_metadata_path
+                    .as_ref()
+                    .ok_or("keywordpir metadata path missing")?;
+                let collision_path = collision_db_path(metadata_path);
+                let collision_db = std::fs::read(&collision_path).map_err(|err| {
+                    format!(
+                        "failed to read collision db {}: {}",
+                        collision_path.display(),
+                        err
+                    )
+                })?;
+                let (collision_params, collision_num_entries) = params_from_db(
+                    &collision_db,
+                    metadata.collision_entry_size,
+                    args.lambda,
+                )?;
+                let collision_buckets =
+                    buckets_for_entries(metadata.collision_count, metadata.bucket_size);
+                if collision_buckets == 0 {
+                    return Err("collision num_buckets must be >0".into());
+                }
+                let expected_collision_entries = collision_buckets
+                    .checked_mul(metadata.bucket_size)
+                    .ok_or("collision table size overflow")?;
+                if collision_num_entries != expected_collision_entries {
+                    return Err(format!(
+                        "collision table entries {} do not match expected {}",
+                        collision_num_entries, expected_collision_entries
+                    )
+                    .into());
+                }
+                let collision_cfg = CuckooConfig::new(
+                    collision_buckets,
+                    metadata.bucket_size,
+                    metadata.num_hashes,
+                    metadata.max_kicks,
+                    metadata.seed,
+                );
+                collision_keyword_client = Some(KeywordPirClient::new(KeywordPirParams {
+                    cfg: collision_cfg,
+                    entry_size: metadata.entry_size,
+                }));
+                collision_client = Some(load_or_generate_client(
+                    &collision_db,
+                    collision_params,
+                    args.seed,
+                    None,
+                )?);
+                collision_tags_set = Some(tags.iter().copied().collect());
+            }
             kp_client.set_collision_tags(tags);
         }
         keyword_client = Some(kp_client);
+    }
+
+    let mut collision_coverage: Option<Vec<Vec<u32>>> = None;
+    if coverage_enabled {
+        if let Some(ref mut collision_client) = collision_client {
+            collision_coverage = Some(collision_client.build_coverage_index());
+        }
     }
 
     let timeout = Duration::from_secs(DEFAULT_TCP_TIMEOUT_SECS);
@@ -598,45 +880,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let start = Instant::now();
-    let mut pending: Vec<PendingItem> = Vec::new();
     if is_keywordpir {
         let keyword_client = keyword_client.as_ref().ok_or("keywordpir client missing")?;
-        for key in keyword_keys {
-            let positions = keyword_client.positions_for_key(&key);
-            for pos in positions {
-                let idx = pos as u64;
-                let build_start = Instant::now();
-                let (real_query, dummy_query, real_hint) = match &coverage {
-                    Some(coverage) => client.build_network_queries_with_coverage(idx, coverage)?,
-                    None => client.build_network_queries(idx)?,
-                };
-                record("build_query", build_start.elapsed().as_micros() as u64);
-
-                let real = Query { id: real_query.id, subset: real_query.subset };
-                let dummy = Query { id: dummy_query.id, subset: dummy_query.subset };
-
-                pending.push(PendingItem {
-                    query: real,
-                    kind: PendingKind::Real { index: idx, hint: real_hint },
-                });
-                pending.push(PendingItem {
-                    query: dummy,
-                    kind: PendingKind::Dummy,
-                });
-
-                if pending.len() >= batch_size {
-                    flush_batch(
-                        &mut stream,
-                        &mut pending,
-                        batch_size,
-                        &mut client,
-                        &coverage,
-                        &mut record,
-                    )?;
+        let mut main_keys = Vec::new();
+        let mut collision_keys = Vec::new();
+        for key in &keyword_keys {
+            let tag = tag_for_key(key).ok_or("invalid key length for tag")?;
+            let use_collision = collision_tags_set
+                .as_ref()
+                .map_or(false, |tags| tags.contains(&tag));
+            if use_collision {
+                if collision_keyword_client.is_none() {
+                    return Err("collision client missing for collision tags".into());
                 }
+                collision_keys.push(key.clone());
+            } else {
+                main_keys.push(key.clone());
             }
         }
+
+        run_keywordpir_keys(
+            &mut stream,
+            &mut client,
+            keyword_client,
+            coverage.as_ref(),
+            &mut record,
+            &main_keys,
+            batch_size,
+        )?;
+
+        if !collision_keys.is_empty() {
+            let collision_addr = args
+                .collision_server
+                .as_deref()
+                .ok_or("collision-server required for collision queries")?;
+            let collision_stream = if let Some(ref mut stream) = collision_stream {
+                stream
+            } else {
+                let mut stream = connect_with_timeouts(collision_addr, timeout)?;
+                write_frame(&mut stream, &cfg_bytes)?;
+                collision_stream = Some(stream);
+                collision_stream.as_mut().ok_or("collision stream missing")?
+            };
+            let collision_client = collision_client
+                .as_mut()
+                .ok_or("collision client missing for collision queries")?;
+            let collision_keyword_client = collision_keyword_client
+                .as_ref()
+                .ok_or("collision keyword client missing for collision queries")?;
+            run_keywordpir_keys(
+                collision_stream,
+                collision_client,
+                collision_keyword_client,
+                collision_coverage.as_ref(),
+                &mut record,
+                &collision_keys,
+                batch_size,
+            )?;
+        }
     } else {
+        let mut pending: Vec<PendingItem> = Vec::new();
         for i in 0..args.query_count {
             let idx = (i % num_entries as u64) as u64;
             let build_start = Instant::now();
@@ -646,8 +949,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             record("build_query", build_start.elapsed().as_micros() as u64);
 
-            let real = Query { id: real_query.id, subset: real_query.subset };
-            let dummy = Query { id: dummy_query.id, subset: dummy_query.subset };
+            let real = Query::Rms24 { id: real_query.id, subset: real_query.subset };
+            let dummy = Query::Rms24 { id: dummy_query.id, subset: dummy_query.subset };
 
             pending.push(PendingItem {
                 query: real,
@@ -669,16 +972,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )?;
             }
         }
-    }
-    while !pending.is_empty() {
-        flush_batch(
-            &mut stream,
-            &mut pending,
-            batch_size,
-            &mut client,
-            &coverage,
-            &mut record,
-        )?;
+        while !pending.is_empty() {
+            flush_batch(
+                &mut stream,
+                &mut pending,
+                batch_size,
+                &mut client,
+                &coverage,
+                &mut record,
+            )?;
+        }
     }
     let elapsed = start.elapsed();
     println!("elapsed_ms={}", elapsed.as_millis());
@@ -883,5 +1186,88 @@ mod tests {
         assert_eq!(num_entries, 2);
         assert_eq!(params.num_entries, 2);
         assert_eq!(params.entry_size, 4);
+    }
+
+    #[test]
+    fn test_online_keywordpir_flow_builds_subsets() {
+        let params = Params::new(16, 4, 2);
+        let prf = prf_from_seed(1);
+        let mut online = OnlineClient::new(params.clone(), prf, 1);
+        let db = vec![0u8; params.num_entries as usize * params.entry_size];
+        online.generate_hints(&db).unwrap();
+        let coverage = online.build_coverage_index();
+
+        let cfg = CuckooConfig::new(4, 2, 2, 8, 1);
+        let keyword_client =
+            KeywordPirClient::new(KeywordPirParams { cfg, entry_size: params.entry_size });
+        let key = find_key_with_covered_positions(&keyword_client, &coverage);
+        let item =
+            build_keywordpir_pending(&keyword_client, &mut online, None, &key, 7).unwrap();
+        match item.query {
+            Query::KeywordPir { subsets, .. } => assert!(!subsets.is_empty()),
+            _ => panic!("expected keywordpir query"),
+        }
+        assert_eq!(item.hint_ids.len(), item.positions.len() * 2);
+    }
+
+    #[test]
+    fn test_online_keywordpir_flow_builds_subsets_with_coverage() {
+        let params = Params::new(16, 4, 2);
+        let prf = prf_from_seed(2);
+        let mut online = OnlineClient::new(params.clone(), prf, 2);
+        let db = vec![0u8; params.num_entries as usize * params.entry_size];
+        online.generate_hints(&db).unwrap();
+        let coverage = online.build_coverage_index();
+
+        let cfg = CuckooConfig::new(4, 2, 2, 8, 1);
+        let keyword_client =
+            KeywordPirClient::new(KeywordPirParams { cfg, entry_size: params.entry_size });
+        let key = find_key_with_covered_positions(&keyword_client, &coverage);
+        let item =
+            build_keywordpir_pending(&keyword_client, &mut online, Some(&coverage), &key, 8)
+                .unwrap();
+        match item.query {
+            Query::KeywordPir { subsets, .. } => assert!(!subsets.is_empty()),
+            _ => panic!("expected keywordpir query"),
+        }
+    }
+
+    #[test]
+    fn test_build_keywordpir_pending_rejects_empty_positions() {
+        let params = Params::new(16, 4, 2);
+        let prf = prf_from_seed(3);
+        let mut online = OnlineClient::new(params.clone(), prf, 3);
+        let db = vec![0u8; params.num_entries as usize * params.entry_size];
+        online.generate_hints(&db).unwrap();
+
+        let cfg = CuckooConfig::new(4, 2, 0, 8, 1);
+        let keyword_client =
+            KeywordPirClient::new(KeywordPirParams { cfg, entry_size: params.entry_size });
+        let key = vec![0x33u8; 20];
+        match build_keywordpir_pending(&keyword_client, &mut online, None, &key, 9) {
+            Ok(_) => panic!("expected error for empty keywordpir positions"),
+            Err(err) => assert!(err.to_string().contains("keywordpir positions")),
+        }
+    }
+
+    fn find_key_with_covered_positions(
+        keyword_client: &KeywordPirClient,
+        coverage: &[Vec<u32>],
+    ) -> Vec<u8> {
+        for byte in 0u8..=255 {
+            let key = vec![byte; 20];
+            let positions = keyword_client.positions_for_key(&key);
+            if positions.is_empty() {
+                continue;
+            }
+            if positions.iter().all(|pos| {
+                coverage
+                    .get(*pos)
+                    .map_or(false, |hints| !hints.is_empty())
+            }) {
+                return key;
+            }
+        }
+        panic!("no keywordpir key found with covered positions");
     }
 }
