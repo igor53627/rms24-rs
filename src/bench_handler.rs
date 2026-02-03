@@ -38,7 +38,9 @@ fn handle_single<D: Db>(server: &Server<D>, query: Query, max_batch: usize) -> S
             if subsets.len() > max_batch {
                 return ServerFrame::Reply(Reply::Error {
                     id,
-                    message: format!("keywordpir subsets exceed max_batch {max_batch}"),
+                    message: format!(
+                        "keywordpir subsets exceed max_batch {max_batch} (max RMS24 subsets per frame)"
+                    ),
                 });
             }
             let mut parities = Vec::with_capacity(subsets.len());
@@ -62,6 +64,11 @@ fn handle_single<D: Db>(server: &Server<D>, query: Query, max_batch: usize) -> S
 
 /// Handle a batch of queries, rejecting batches larger than max_batch.
 fn handle_batch<D: Db>(server: &Server<D>, batch: BatchRequest, max_batch: usize) -> ServerFrame {
+    if batch.queries.len() > max_batch {
+        return ServerFrame::Error {
+            message: format!("batch too large: {}", batch.queries.len()),
+        };
+    }
     let total_cost: usize = batch.queries.iter().map(query_cost).sum();
     if total_cost > max_batch {
         return ServerFrame::Error {
