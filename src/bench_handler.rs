@@ -13,13 +13,13 @@ pub fn handle_client_frame<D: Db>(
     max_batch: usize,
 ) -> ServerFrame {
     match frame {
-        ClientFrame::Query(query) => handle_single(server, query),
+        ClientFrame::Query(query) => handle_single(server, query, max_batch),
         ClientFrame::BatchRequest(batch) => handle_batch(server, batch, max_batch),
     }
 }
 
 /// Handle a single benchmark query by delegating to the RMS24 server.
-fn handle_single<D: Db>(server: &Server<D>, query: Query) -> ServerFrame {
+fn handle_single<D: Db>(server: &Server<D>, query: Query, max_batch: usize) -> ServerFrame {
     match query {
         Query::Rms24 { id, subset } => {
             let rms_query = RmsQuery { id, subset };
@@ -35,10 +35,10 @@ fn handle_single<D: Db>(server: &Server<D>, query: Query) -> ServerFrame {
             }
         }
         Query::KeywordPir { id, subsets } => {
-            if subsets.is_empty() || subsets.iter().any(|subset| subset.is_empty()) {
+            if subsets.len() > max_batch {
                 return ServerFrame::Reply(Reply::Error {
                     id,
-                    message: "keywordpir subsets must be non-empty".to_string(),
+                    message: format!("keywordpir subsets exceed max_batch {max_batch}"),
                 });
             }
             let mut parities = Vec::with_capacity(subsets.len());
@@ -62,9 +62,10 @@ fn handle_single<D: Db>(server: &Server<D>, query: Query) -> ServerFrame {
 
 /// Handle a batch of queries, rejecting batches larger than max_batch.
 fn handle_batch<D: Db>(server: &Server<D>, batch: BatchRequest, max_batch: usize) -> ServerFrame {
-    if batch.queries.len() > max_batch {
+    let total_cost: usize = batch.queries.iter().map(query_cost).sum();
+    if total_cost > max_batch {
         return ServerFrame::Error {
-            message: format!("batch too large: {}", batch.queries.len()),
+            message: format!("batch too large: {}", total_cost),
         };
     }
     let mut replies = Vec::with_capacity(batch.queries.len());
@@ -84,37 +85,37 @@ fn handle_batch<D: Db>(server: &Server<D>, batch: BatchRequest, max_batch: usize
                 }
             }
             Query::KeywordPir { id, subsets } => {
-                if subsets.is_empty() || subsets.iter().any(|subset| subset.is_empty()) {
-                    Reply::Error {
-                        id,
-                        message: "keywordpir subsets must be non-empty".to_string(),
-                    }
-                } else {
-                    let mut parities = Vec::with_capacity(subsets.len());
-                    let mut err_out = None;
-                    for subset in subsets {
-                        let rms_query = RmsQuery { id, subset };
-                        match server.answer(&rms_query) {
-                            Ok(reply) => parities.push(reply.parity),
-                            Err(err) => {
-                                err_out = Some(err);
-                                break;
-                            }
+                let mut parities = Vec::with_capacity(subsets.len());
+                let mut err_out = None;
+                for subset in subsets {
+                    let rms_query = RmsQuery { id, subset };
+                    match server.answer(&rms_query) {
+                        Ok(reply) => parities.push(reply.parity),
+                        Err(err) => {
+                            err_out = Some(err);
+                            break;
                         }
                     }
-                    match err_out {
-                        Some(err) => Reply::Error {
-                            id,
-                            message: err.to_string(),
-                        },
-                        None => Reply::KeywordPir { id, parities },
-                    }
+                }
+                match err_out {
+                    Some(err) => Reply::Error {
+                        id,
+                        message: err.to_string(),
+                    },
+                    None => Reply::KeywordPir { id, parities },
                 }
             }
         };
         replies.push(reply);
     }
     ServerFrame::BatchReply(BatchReply { replies })
+}
+
+fn query_cost(query: &Query) -> usize {
+    match query {
+        Query::Rms24 { .. } => 1,
+        Query::KeywordPir { subsets, .. } => subsets.len(),
+    }
 }
 
 #[cfg(test)]
@@ -192,16 +193,20 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_keywordpir_empty_subsets_error() {
+    fn test_handle_keywordpir_empty_subset_allowed() {
         let db = InMemoryDb::new(vec![1, 2, 3, 4], 2).unwrap();
         let server = Server::new(db, 2).unwrap();
-        let query = Query::KeywordPir { id: 9, subsets: Vec::new() };
+        let query = Query::KeywordPir {
+            id: 9,
+            subsets: vec![Vec::new()],
+        };
         let out = handle_client_frame(&server, ClientFrame::Query(query), 8);
         match out {
-            ServerFrame::Reply(Reply::Error { message, .. }) => {
-                assert!(message.contains("keywordpir subsets"));
+            ServerFrame::Reply(Reply::KeywordPir { id, parities }) => {
+                assert_eq!(id, 9);
+                assert_eq!(parities, vec![vec![0, 0]]);
             }
-            _ => panic!("expected error reply"),
+            _ => panic!("expected keywordpir reply"),
         }
     }
 
@@ -213,12 +218,12 @@ mod tests {
             id: 1,
             subsets: vec![vec![(0, 0)], vec![(0, 1)]],
         };
-        let bad = Query::KeywordPir {
+        let empty = Query::KeywordPir {
             id: 2,
             subsets: vec![Vec::new()],
         };
         let frame = ClientFrame::BatchRequest(BatchRequest {
-            queries: vec![ok, bad],
+            queries: vec![ok, empty],
         });
         let out = handle_client_frame(&server, frame, 8);
 
@@ -233,14 +238,51 @@ mod tests {
                     _ => panic!("expected keywordpir reply"),
                 }
                 match &batch.replies[1] {
-                    Reply::Error { id, message } => {
+                    Reply::KeywordPir { id, parities } => {
                         assert_eq!(*id, 2);
-                        assert!(message.contains("keywordpir subsets"));
+                        assert_eq!(parities, &vec![vec![0, 0]]);
                     }
-                    _ => panic!("expected error reply"),
+                    _ => panic!("expected keywordpir reply"),
                 }
             }
             _ => panic!("expected batch reply"),
+        }
+    }
+
+    #[test]
+    fn test_keywordpir_subset_limit_single() {
+        let db = InMemoryDb::new(vec![1, 2, 3, 4], 2).unwrap();
+        let server = Server::new(db, 2).unwrap();
+        let query = Query::KeywordPir {
+            id: 3,
+            subsets: vec![vec![(0, 0)], vec![(0, 1)]],
+        };
+        let out = handle_client_frame(&server, ClientFrame::Query(query), 1);
+        match out {
+            ServerFrame::Reply(Reply::Error { message, .. }) => {
+                assert!(message.contains("keywordpir subsets"));
+            }
+            _ => panic!("expected error reply"),
+        }
+    }
+
+    #[test]
+    fn test_keywordpir_subset_limit_batch() {
+        let db = InMemoryDb::new(vec![1, 2, 3, 4], 2).unwrap();
+        let server = Server::new(db, 2).unwrap();
+        let query = Query::KeywordPir {
+            id: 4,
+            subsets: vec![vec![(0, 0)], vec![(0, 1)]],
+        };
+        let frame = ClientFrame::BatchRequest(BatchRequest {
+            queries: vec![query],
+        });
+        let out = handle_client_frame(&server, frame, 1);
+        match out {
+            ServerFrame::Error { message } => {
+                assert!(message.contains("batch"));
+            }
+            _ => panic!("expected error frame"),
         }
     }
 }

@@ -88,6 +88,9 @@ impl CuckooConfig {
 }
 
 pub fn cuckoo_positions(key: &[u8], cfg: &CuckooConfig) -> Vec<usize> {
+    if cfg.num_buckets == 0 || cfg.num_hashes == 0 {
+        return Vec::new();
+    }
     (0..cfg.num_hashes)
         .map(|i| hash_with_seed(key, cfg.seed.wrapping_add(i as u64)) % cfg.num_buckets)
         .collect()
@@ -136,9 +139,15 @@ impl CuckooTable {
     }
 
     pub fn insert(&mut self, key: &[u8], value: [u8; 40]) -> Result<(), String> {
+        if self.cfg.num_buckets == 0 || self.cfg.num_hashes == 0 || self.cfg.bucket_size == 0 {
+            return Err("invalid cuckoo config".into());
+        }
         let key_hash = hash_key(key);
         let slot = CuckooSlot { key_hash, value };
         let positions = cuckoo_positions(&key_hash, &self.cfg);
+        if positions.is_empty() {
+            return Err("invalid cuckoo config".into());
+        }
         for &bucket in &positions {
             for i in 0..self.cfg.bucket_size {
                 let idx = bucket * self.cfg.bucket_size + i;
@@ -174,6 +183,9 @@ impl CuckooTable {
     pub fn find_candidate(&self, key: &[u8]) -> Option<[u8; 40]> {
         let key_hash = hash_key(key);
         let positions = cuckoo_positions(&key_hash, &self.cfg);
+        if positions.is_empty() {
+            return None;
+        }
         for &bucket in &positions {
             for i in 0..self.cfg.bucket_size {
                 let idx = bucket * self.cfg.bucket_size + i;
@@ -199,7 +211,6 @@ impl CuckooTable {
     }
 
     pub fn to_collision_bytes(&self) -> Vec<u8> {
-        const COLLISION_ENTRY_SIZE: usize = 72;
         let mut out = vec![0u8; self.slots.len() * COLLISION_ENTRY_SIZE];
         for (idx, slot) in self.slots.iter().enumerate() {
             if let Some(slot) = slot {
@@ -443,6 +454,26 @@ mod tests {
         let account_tag = tag_for_key(&account_key).unwrap();
         let storage_tag = tag_for_key(&storage_key).unwrap();
         assert_ne!(account_tag.0, storage_tag.0);
+    }
+
+    #[test]
+    fn test_cuckoo_insert_rejects_zero_hashes() {
+        let cfg = CuckooConfig::new(2, 2, 0, 8, 1);
+        let mut table = CuckooTable::new(cfg);
+        let key = vec![0x33u8; 20];
+        let entry = entry_with_tag_for_key(&key);
+        let err = table.insert(&key, entry).unwrap_err();
+        assert!(err.contains("cuckoo config"));
+    }
+
+    #[test]
+    fn test_cuckoo_insert_rejects_zero_buckets() {
+        let cfg = CuckooConfig::new(0, 2, 2, 8, 1);
+        let mut table = CuckooTable::new(cfg);
+        let key = vec![0x44u8; 20];
+        let entry = entry_with_tag_for_key(&key);
+        let err = table.insert(&key, entry).unwrap_err();
+        assert!(err.contains("cuckoo config"));
     }
 
     #[test]
