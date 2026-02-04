@@ -102,6 +102,7 @@ struct KeywordPirMetadata {
     seed: u64,
     collision_entry_size: usize,
     collision_count: usize,
+    collision_num_buckets: usize,
 }
 
 fn parse_keywordpir_metadata(
@@ -117,6 +118,7 @@ fn parse_keywordpir_metadata(
     let mut seed = None;
     let mut collision_entry_size = None;
     let mut collision_count = None;
+    let mut collision_num_buckets = None;
 
     for raw_line in text.lines() {
         let line = raw_line.trim();
@@ -148,6 +150,7 @@ fn parse_keywordpir_metadata(
             "seed" => seed = Some(value),
             "collision_entry_size" => collision_entry_size = Some(value),
             "collision_count" => collision_count = Some(value),
+            "collision_num_buckets" => collision_num_buckets = Some(value),
             _ => {}
         }
     }
@@ -163,6 +166,8 @@ fn parse_keywordpir_metadata(
         collision_entry_size.ok_or("keywordpir metadata missing collision_entry_size")?;
     let collision_count =
         collision_count.ok_or("keywordpir metadata missing collision_count")?;
+    let collision_num_buckets =
+        collision_num_buckets.ok_or("keywordpir metadata missing collision_num_buckets")?;
 
     let entry_size = usize::try_from(entry_size)
         .map_err(|_| "keywordpir metadata entry_size too large")?;
@@ -180,6 +185,8 @@ fn parse_keywordpir_metadata(
         .map_err(|_| "keywordpir metadata collision_entry_size too large")?;
     let collision_count = usize::try_from(collision_count)
         .map_err(|_| "keywordpir metadata collision_count too large")?;
+    let collision_num_buckets = usize::try_from(collision_num_buckets)
+        .map_err(|_| "keywordpir metadata collision_num_buckets too large")?;
 
     Ok(KeywordPirMetadata {
         entry_size,
@@ -191,6 +198,7 @@ fn parse_keywordpir_metadata(
         seed,
         collision_entry_size,
         collision_count,
+        collision_num_buckets,
     })
 }
 
@@ -275,10 +283,6 @@ fn build_round_robin_keys(
         use_account = !use_account;
     }
     Ok(out)
-}
-
-fn buckets_for_entries(count: usize, bucket_size: usize) -> usize {
-    (count + bucket_size - 1) / bucket_size
 }
 
 fn collision_db_path(metadata_path: &Path) -> PathBuf {
@@ -837,8 +841,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     metadata.collision_entry_size,
                     args.lambda,
                 )?;
-                let collision_buckets =
-                    buckets_for_entries(metadata.collision_count, metadata.bucket_size);
+                let collision_buckets = metadata.collision_num_buckets;
                 if collision_buckets == 0 {
                     return Err("collision num_buckets must be >0".into());
                 }
@@ -1025,6 +1028,21 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
+    fn write_temp_metadata(contents: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!(
+            "keywordpir_metadata_test_{}_{}.json",
+            std::process::id(),
+            nanos
+        ));
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
+
     fn env_lock() -> &'static Mutex<()> {
         static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         ENV_LOCK.get_or_init(|| Mutex::new(()))
@@ -1067,6 +1085,22 @@ mod tests {
         ]);
         assert!(args.keywordpir_metadata.is_some());
         assert!(args.account_mapping.is_some());
+    }
+
+    #[test]
+    fn test_parse_keywordpir_metadata_requires_collision_num_buckets() {
+        let path = write_temp_metadata(
+            "{\n  \"entry_size\": 40,\n  \"num_entries\": 4,\n  \"bucket_size\": 2,\n  \"num_buckets\": 2,\n  \"num_hashes\": 2,\n  \"max_kicks\": 8,\n  \"seed\": 1,\n  \"collision_entry_size\": 72,\n  \"collision_count\": 0\n}\n",
+        );
+        match parse_keywordpir_metadata(&path) {
+            Ok(_) => panic!("expected metadata error"),
+            Err(err) => {
+                assert!(err
+                    .to_string()
+                    .contains("keywordpir metadata missing collision_num_buckets"));
+            }
+        }
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -1141,6 +1175,7 @@ mod tests {
             seed: 1,
             collision_entry_size: 72,
             collision_count: 0,
+            collision_num_buckets: 0,
         };
         let max_batch = keywordpir_max_batch_queries(5, Some(&metadata)).unwrap();
         assert_eq!(max_batch, 60);
@@ -1158,6 +1193,7 @@ mod tests {
             seed: 1,
             collision_entry_size: 72,
             collision_count: 0,
+            collision_num_buckets: 0,
         };
         let err = keywordpir_max_batch_queries(5, Some(&metadata)).unwrap_err();
         assert!(err.to_string().contains("keywordpir subsets"));

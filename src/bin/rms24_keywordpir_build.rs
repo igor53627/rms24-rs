@@ -110,9 +110,10 @@ fn write_metadata(
     seed: u64,
     collision_entry_size: usize,
     collision_count: usize,
+    collision_num_buckets: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let metadata = format!(
-        "{{\n  \"entry_size\": {entry_size},\n  \"num_entries\": {num_entries},\n  \"bucket_size\": {bucket_size},\n  \"num_buckets\": {num_buckets},\n  \"num_hashes\": {num_hashes},\n  \"max_kicks\": {max_kicks},\n  \"seed\": {seed},\n  \"collision_entry_size\": {collision_entry_size},\n  \"collision_count\": {collision_count}\n}}\n"
+        "{{\n  \"entry_size\": {entry_size},\n  \"num_entries\": {num_entries},\n  \"bucket_size\": {bucket_size},\n  \"num_buckets\": {num_buckets},\n  \"num_hashes\": {num_hashes},\n  \"max_kicks\": {max_kicks},\n  \"seed\": {seed},\n  \"collision_entry_size\": {collision_entry_size},\n  \"collision_count\": {collision_count},\n  \"collision_num_buckets\": {collision_num_buckets}\n}}\n"
     );
     fs::write(out_dir.join("keywordpir-metadata.json"), metadata)?;
     Ok(())
@@ -180,11 +181,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .filter(|record| collision_set.contains(&record.tag))
         .count();
-    if collision_count > 0 {
-        let collision_buckets = buckets_for_entries(collision_count, args.bucket_size);
-        if collision_buckets == 0 {
+    let collision_buckets = if collision_count > 0 {
+        let buckets = buckets_for_entries(collision_count, args.bucket_size);
+        if buckets == 0 {
             return Err("collision num_buckets must be >0".into());
         }
+        buckets
+    } else {
+        0
+    };
+    if collision_count > 0 {
         let collision_cfg = CuckooConfig::new(
             collision_buckets,
             args.bucket_size,
@@ -219,6 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.seed,
         COLLISION_ENTRY_SIZE,
         collision_count,
+        collision_buckets,
     )?;
 
     Ok(())
@@ -243,6 +250,39 @@ mod tests {
         ]);
         assert_eq!(args.db, "db.bin");
         assert_eq!(args.out, "out");
+    }
+
+    #[test]
+    fn test_write_metadata_includes_collision_num_buckets() {
+        let mut out_dir = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        out_dir.push(format!(
+            "keywordpir_meta_test_{}_{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&out_dir).unwrap();
+        write_metadata(
+            &out_dir,
+            ENTRY_SIZE,
+            4,
+            2,
+            2,
+            2,
+            8,
+            1,
+            COLLISION_ENTRY_SIZE,
+            3,
+            2,
+        )
+        .unwrap();
+        let contents = fs::read_to_string(out_dir.join("keywordpir-metadata.json")).unwrap();
+        assert!(contents.contains("\"collision_num_buckets\": 2"));
+        let _ = fs::remove_file(out_dir.join("keywordpir-metadata.json"));
+        let _ = fs::remove_dir(&out_dir);
     }
 
     #[test]
