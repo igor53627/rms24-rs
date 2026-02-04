@@ -10,6 +10,7 @@ RMS24-RS is a Rust implementation of the RMS24 single-server PIR protocol with o
 - `src/prf.rs`: ChaCha12-based PRF for subset selection and offsets.
 - `src/hints.rs`: Hint state, subset representation, and utilities.
 - `src/client.rs`: Offline hint generation and online query construction, including an in-memory per-hint subset cache for faster query building.
+- `src/keyword_pir/mod.rs`: Keyword PIR cuckoo hashing, mapping parsing, and client query helpers over RMS24 index PIR.
 - `src/online.rs`: Online protocol types (config, queries, replies, errors).
 - `src/online_framing.rs`: Length-prefixed framing helpers for byte streams.
 - `src/online_transport.rs`: Transport abstraction and framed I/O implementation.
@@ -26,6 +27,18 @@ The online protocol exposes a single logical entrypoint with a mode switch (RMS2
 - `src/bin/bench_gpu_hints.rs`: GPU hint benchmarking (with `cuda`).
 - `src/bin/run_gpu_kernel.rs`: GPU kernel runner.
 - `src/bin/generate_subsets.rs`: Subset precomputation helper.
+- `src/bin/rms24_keywordpir_build.rs`: KeywordPIR table builder from mapping files.
+
+## KeywordPIR Pipeline
+
+`rms24_keywordpir_build` ingests the base RMS24 database plus account/storage mapping files, builds a cuckoo table, and emits:
+
+- `keywordpir-db.bin` (RMS24 table over keyword keys)
+- `keywordpir-collision-db.bin` (optional collision table)
+- `keywordpir-collision-tags.bin` (collision tag list)
+- `keywordpir-metadata.json` (cuckoo + collision metadata)
+
+The benchmark client loads the metadata and mapping files, derives cuckoo candidate indices per key, and issues RMS24 index PIR queries to the keywordpir DB while preserving batching semantics. In keywordpir mode, each keyword expands into `num_hashes * bucket_size` candidate positions, so `--query-count` counts keywords rather than total RMS24 queries. If collision tags are provided, the benchmark client requires a collision server address (`--collision-server`) and reads `keywordpir-collision-db.bin` from the metadata directory to build collision-table hints.
 
 ## Data Model
 

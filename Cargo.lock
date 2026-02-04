@@ -646,6 +646,7 @@ dependencies = [
  "rand_chacha",
  "rayon",
  "serde",
+ "serde_json",
  "sha3",
  "thiserror",
 ]
