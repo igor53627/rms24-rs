@@ -10,6 +10,7 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 
 const COLLISION_ENTRY_SIZE: usize = 72;
+const TARGET_LOAD_FACTOR: f64 = 0.90;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -40,7 +41,11 @@ struct EntryRecord {
 }
 
 fn buckets_for_entries(count: usize, bucket_size: usize) -> usize {
-    (count + bucket_size - 1) / bucket_size
+    if count == 0 {
+        return 0;
+    }
+    let target_entries = (count as f64 / TARGET_LOAD_FACTOR).ceil() as usize;
+    (target_entries + bucket_size - 1) / bucket_size
 }
 
 fn read_mapping_entries(
@@ -234,5 +239,11 @@ mod tests {
         ]);
         assert_eq!(args.db, "db.bin");
         assert_eq!(args.out, "out");
+    }
+
+    #[test]
+    fn test_buckets_for_entries_adds_slack() {
+        let buckets = buckets_for_entries(10, 2);
+        assert_eq!(buckets, 6);
     }
 }

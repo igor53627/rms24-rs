@@ -207,7 +207,6 @@ Expected: PASS
 jj describe -m "feat: retry keywordpir builder with slack" \
   -m "Plan: docs/plans/2026-02-02-keywordpir-builder-robustness-implementation.md"
 ```
-```
 
 Plan complete and saved to `docs/plans/2026-02-02-keywordpir-builder-robustness-implementation.md`. Two execution options:
 

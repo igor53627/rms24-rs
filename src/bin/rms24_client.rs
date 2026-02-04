@@ -298,6 +298,31 @@ fn coverage_enabled(args: &Args) -> bool {
     }
 }
 
+fn keywordpir_max_batch_queries(
+    batch_size: usize,
+    metadata: Option<&KeywordPirMetadata>,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let batch_size_u32 =
+        u32::try_from(batch_size).map_err(|_| "batch_size must fit in u32")?;
+    let Some(metadata) = metadata else {
+        return Ok(batch_size_u32);
+    };
+    let subsets_per_query = metadata
+        .num_hashes
+        .checked_mul(metadata.bucket_size)
+        .and_then(|v| v.checked_mul(2))
+        .ok_or("keywordpir subsets overflow")?;
+    if subsets_per_query == 0 {
+        return Err("keywordpir subsets must be >0".into());
+    }
+    let max_batch = batch_size
+        .checked_mul(subsets_per_query)
+        .ok_or("keywordpir max_batch overflow")?;
+    let max_batch_u32 =
+        u32::try_from(max_batch).map_err(|_| "keywordpir max_batch must fit in u32")?;
+    Ok(max_batch_u32)
+}
+
 fn connect_with_timeouts(addr: &str, timeout: Duration) -> io::Result<TcpStream> {
     let mut last_err = None;
     let addrs = addr
@@ -717,6 +742,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "threads must fit in u32")?;
     let batch_size_u32 =
         u32::try_from(batch_size).map_err(|_| "batch_size must fit in u32")?;
+    let max_batch_queries =
+        keywordpir_max_batch_queries(batch_size, keywordpir_metadata.as_ref())?;
 
     let cfg = RunConfig {
         dataset_id: "unknown".to_string(),
@@ -725,7 +752,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         threads,
         seed: args.seed,
         batch_size: batch_size_u32,
-        max_batch_queries: batch_size_u32,
+        max_batch_queries,
     };
 
     let mut keyword_client: Option<KeywordPirClient> = None;
@@ -1100,6 +1127,40 @@ mod tests {
             "8",
         ]);
         assert_eq!(args.batch_size, 8);
+    }
+
+    #[test]
+    fn test_keywordpir_max_batch_queries_scales() {
+        let metadata = KeywordPirMetadata {
+            entry_size: 40,
+            num_entries: 10,
+            bucket_size: 3,
+            num_buckets: 4,
+            num_hashes: 2,
+            max_kicks: 8,
+            seed: 1,
+            collision_entry_size: 72,
+            collision_count: 0,
+        };
+        let max_batch = keywordpir_max_batch_queries(5, Some(&metadata)).unwrap();
+        assert_eq!(max_batch, 60);
+    }
+
+    #[test]
+    fn test_keywordpir_max_batch_queries_rejects_zero_subsets() {
+        let metadata = KeywordPirMetadata {
+            entry_size: 40,
+            num_entries: 10,
+            bucket_size: 0,
+            num_buckets: 4,
+            num_hashes: 2,
+            max_kicks: 8,
+            seed: 1,
+            collision_entry_size: 72,
+            collision_count: 0,
+        };
+        let err = keywordpir_max_batch_queries(5, Some(&metadata)).unwrap_err();
+        assert!(err.to_string().contains("keywordpir subsets"));
     }
 
     #[test]
