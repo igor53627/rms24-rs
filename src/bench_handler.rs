@@ -35,7 +35,7 @@ fn handle_single<D: Db>(server: &Server<D>, query: Query, max_batch: usize) -> S
             }
         }
         Query::KeywordPir { id, subsets } => {
-            if subsets.is_empty() || subsets.iter().any(|subset| subset.is_empty()) {
+            if subsets.is_empty() {
                 return ServerFrame::Reply(Reply::Error {
                     id,
                     message: "keywordpir subsets must be non-empty".to_string(),
@@ -98,7 +98,7 @@ fn handle_batch<D: Db>(server: &Server<D>, batch: BatchRequest, max_batch: usize
                 }
             }
             Query::KeywordPir { id, subsets } => {
-                if subsets.is_empty() || subsets.iter().any(|subset| subset.is_empty()) {
+                if subsets.is_empty() {
                     Reply::Error {
                         id,
                         message: "keywordpir subsets must be non-empty".to_string(),
@@ -213,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_keywordpir_empty_subset_rejected() {
+    fn test_handle_keywordpir_empty_subset_allowed() {
         let db = InMemoryDb::new(vec![1, 2, 3, 4], 2).unwrap();
         let server = Server::new(db, 2).unwrap();
         let query = Query::KeywordPir {
@@ -222,15 +222,16 @@ mod tests {
         };
         let out = handle_client_frame(&server, ClientFrame::Query(query), 8);
         match out {
-            ServerFrame::Reply(Reply::Error { message, .. }) => {
-                assert!(message.contains("keywordpir subsets"));
+            ServerFrame::Reply(Reply::KeywordPir { id, parities }) => {
+                assert_eq!(id, 9);
+                assert_eq!(parities, vec![vec![0, 0]]);
             }
-            _ => panic!("expected keywordpir error reply"),
+            _ => panic!("expected keywordpir reply"),
         }
     }
 
     #[test]
-    fn test_batch_keywordpir_queries_reject_empty() {
+    fn test_batch_keywordpir_queries_allow_empty() {
         let db = InMemoryDb::new(vec![1, 2, 3, 4], 2).unwrap();
         let server = Server::new(db, 2).unwrap();
         let ok = Query::KeywordPir {
@@ -257,10 +258,11 @@ mod tests {
                     _ => panic!("expected keywordpir reply"),
                 }
                 match &batch.replies[1] {
-                    Reply::Error { message, .. } => {
-                        assert!(message.contains("keywordpir subsets"));
+                    Reply::KeywordPir { id, parities } => {
+                        assert_eq!(*id, 2);
+                        assert_eq!(parities, &vec![vec![0, 0]]);
                     }
-                    _ => panic!("expected keywordpir error reply"),
+                    _ => panic!("expected keywordpir reply"),
                 }
             }
             _ => panic!("expected batch reply"),

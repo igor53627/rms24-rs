@@ -168,7 +168,18 @@ impl CuckooTable {
             };
             cur_slot = evicted;
             let evicted_positions = cuckoo_positions(&cur_slot.key_hash, &self.cfg);
-            cur_bucket = evicted_positions[0];
+            if evicted_positions.is_empty() {
+                return Err("invalid cuckoo config".into());
+            }
+            let mut next_bucket = evicted_positions[0];
+            if evicted_positions.len() > 1 {
+                let mut next_idx = kick % evicted_positions.len();
+                if evicted_positions[next_idx] == cur_bucket {
+                    next_idx = (next_idx + 1) % evicted_positions.len();
+                }
+                next_bucket = evicted_positions[next_idx];
+            }
+            cur_bucket = next_bucket;
             for i in 0..self.cfg.bucket_size {
                 let cand = cur_bucket * self.cfg.bucket_size + i;
                 if self.slots[cand].is_none() {
@@ -288,15 +299,6 @@ impl KeywordPirClient {
                 }
             }
         }
-
-        for pos in positions {
-            if let Some(slot) = table.slots.get(pos).and_then(|slot| slot.as_ref()) {
-                if self.entry_tag_matches(key, &slot.value)? {
-                    return Ok(slot.value);
-                }
-            }
-        }
-
         Err("no matching entry found".into())
     }
 
@@ -416,6 +418,17 @@ impl KeywordPirClient {
 mod tests {
     use super::*;
 
+    fn find_key_for_positions(cfg: &CuckooConfig, target: &[usize], start: u64) -> Vec<u8> {
+        for i in start..start + 100_000 {
+            let mut key = vec![0u8; 20];
+            key[..8].copy_from_slice(&i.to_le_bytes());
+            if cuckoo_positions(&hash_key(&key), cfg) == target {
+                return key;
+            }
+        }
+        panic!("failed to find key for positions {:?}", target);
+    }
+
     fn entry_with_tag_for_key(key: &[u8]) -> [u8; ENTRY_SIZE] {
         let mut entry = [0u8; ENTRY_SIZE];
         let tag = tag_for_key(key).expect("valid key length");
@@ -497,6 +510,21 @@ mod tests {
     }
 
     #[test]
+    fn test_cuckoo_insert_uses_alternate_bucket() {
+        let cfg = CuckooConfig::new(3, 1, 2, 8, 1);
+        let key_a = find_key_for_positions(&cfg, &[0, 2], 0);
+        let key_b = find_key_for_positions(&cfg, &[0, 1], 10_000);
+        let key_c = find_key_for_positions(&cfg, &[0, 1], 20_000);
+        let mut table = CuckooTable::new(cfg);
+        let entry_a = entry_with_tag_for_key(&key_a);
+        let entry_b = entry_with_tag_for_key(&key_b);
+        let entry_c = entry_with_tag_for_key(&key_c);
+        table.insert(&key_a, entry_a).unwrap();
+        table.insert(&key_b, entry_b).unwrap();
+        assert!(table.insert(&key_c, entry_c).is_ok());
+    }
+
+    #[test]
     fn test_keywordpir_query_returns_matching_tag() {
         let cfg = CuckooConfig::new(8, 2, 2, 32, 1);
         let key = vec![0x11u8; 20];
@@ -507,6 +535,25 @@ mod tests {
         let client = KeywordPirClient::new(params);
         let got = client.query_local(&key, &table).unwrap();
         assert_eq!(got, entry);
+    }
+
+    #[test]
+    fn test_keywordpir_query_rejects_tag_only_match() {
+        let cfg = CuckooConfig::new(8, 2, 2, 32, 1);
+        let key = vec![0x11u8; 20];
+        let other_key = vec![0x22u8; 20];
+        let entry = entry_with_tag_for_key(&key);
+        let positions = cuckoo_positions(&hash_key(&key), &cfg);
+        assert!(!positions.is_empty());
+        let mut table = CuckooTable::new(cfg.clone());
+        let idx = positions[0] * cfg.bucket_size;
+        table.slots[idx] = Some(CuckooSlot {
+            key_hash: hash_key(&other_key),
+            value: entry,
+        });
+        let params = KeywordPirParams { cfg, entry_size: 40 };
+        let client = KeywordPirClient::new(params);
+        assert!(client.query_local(&key, &table).is_err());
     }
 
     #[test]

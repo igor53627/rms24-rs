@@ -40,6 +40,20 @@ struct EntryRecord {
     tag: Tag,
 }
 
+#[derive(serde::Serialize)]
+struct KeywordPirMetadataFile {
+    entry_size: u64,
+    num_entries: u64,
+    bucket_size: u64,
+    num_buckets: u64,
+    num_hashes: u64,
+    max_kicks: u64,
+    seed: u64,
+    collision_entry_size: u64,
+    collision_count: u64,
+    collision_num_buckets: u64,
+}
+
 fn buckets_for_entries(count: usize, bucket_size: usize) -> usize {
     if count == 0 || bucket_size == 0 {
         return 0;
@@ -112,10 +126,21 @@ fn write_metadata(
     collision_count: usize,
     collision_num_buckets: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let metadata = format!(
-        "{{\n  \"entry_size\": {entry_size},\n  \"num_entries\": {num_entries},\n  \"bucket_size\": {bucket_size},\n  \"num_buckets\": {num_buckets},\n  \"num_hashes\": {num_hashes},\n  \"max_kicks\": {max_kicks},\n  \"seed\": {seed},\n  \"collision_entry_size\": {collision_entry_size},\n  \"collision_count\": {collision_count},\n  \"collision_num_buckets\": {collision_num_buckets}\n}}\n"
-    );
-    fs::write(out_dir.join("keywordpir-metadata.json"), metadata)?;
+    let metadata = KeywordPirMetadataFile {
+        entry_size: entry_size as u64,
+        num_entries: num_entries as u64,
+        bucket_size: bucket_size as u64,
+        num_buckets: num_buckets as u64,
+        num_hashes: num_hashes as u64,
+        max_kicks: max_kicks as u64,
+        seed,
+        collision_entry_size: collision_entry_size as u64,
+        collision_count: collision_count as u64,
+        collision_num_buckets: collision_num_buckets as u64,
+    };
+    let mut contents = serde_json::to_string_pretty(&metadata)?;
+    contents.push('\n');
+    fs::write(out_dir.join("keywordpir-metadata.json"), contents)?;
     Ok(())
 }
 

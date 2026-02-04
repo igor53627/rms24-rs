@@ -4,11 +4,12 @@ use rms24::bench_proto::{BatchRequest, ClientFrame, Mode, Query, Reply, RunConfi
 use rms24::bench_timing::TimingCounters;
 use rms24::client::OnlineClient;
 use rms24::keyword_pir::{
-    parse_mapping_record, tag_for_key, CuckooConfig, KeywordPirClient, KeywordPirParams,
+    parse_mapping_record, tag_for_key, tag_from_entry, CuckooConfig, KeywordPirClient,
+    KeywordPirParams,
 };
 use rms24::params::Params;
 use rms24::prf::Prf;
-use rms24::schema40::{Tag, TAG_SIZE};
+use rms24::schema40::{Tag, ENTRY_SIZE, TAG_SIZE};
 use sha3::{Digest, Sha3_256};
 use std::collections::HashSet;
 use std::fs::File;
@@ -68,6 +69,15 @@ fn prf_from_seed(seed: u64) -> Prf {
     Prf::new(key)
 }
 
+fn keywordpir_key_hash(key: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha3_256::new();
+    hasher.update(key);
+    let out = hasher.finalize();
+    let mut key_hash = [0u8; 32];
+    key_hash.copy_from_slice(&out);
+    key_hash
+}
+
 fn params_match(a: &Params, b: &Params) -> bool {
     a.num_entries == b.num_entries
         && a.entry_size == b.entry_size
@@ -105,84 +115,45 @@ struct KeywordPirMetadata {
     collision_num_buckets: usize,
 }
 
+#[derive(serde::Deserialize)]
+struct KeywordPirMetadataFile {
+    entry_size: u64,
+    num_entries: u64,
+    bucket_size: u64,
+    num_buckets: u64,
+    num_hashes: u64,
+    max_kicks: u64,
+    seed: u64,
+    collision_entry_size: u64,
+    collision_count: u64,
+    #[serde(default)]
+    collision_num_buckets: Option<u64>,
+}
+
 fn parse_keywordpir_metadata(
     path: &Path,
 ) -> Result<KeywordPirMetadata, Box<dyn std::error::Error>> {
     let text = std::fs::read_to_string(path)?;
-    let mut entry_size = None;
-    let mut num_entries = None;
-    let mut bucket_size = None;
-    let mut num_buckets = None;
-    let mut num_hashes = None;
-    let mut max_kicks = None;
-    let mut seed = None;
-    let mut collision_entry_size = None;
-    let mut collision_count = None;
-    let mut collision_num_buckets = None;
+    let raw: KeywordPirMetadataFile = serde_json::from_str(&text)
+        .map_err(|err| format!("keywordpir metadata parse error: {err}"))?;
+    let collision_num_buckets = raw.collision_num_buckets.unwrap_or(0);
 
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        if !line.starts_with('"') {
-            continue;
-        }
-        let line = line.trim_end_matches(',');
-        let mut parts = line.splitn(2, ':');
-        let key = parts
-            .next()
-            .ok_or("keywordpir metadata missing key")?
-            .trim()
-            .trim_matches('"');
-        let value_str = parts
-            .next()
-            .ok_or("keywordpir metadata missing value")?
-            .trim()
-            .trim_end_matches(',');
-        let value: u64 = value_str
-            .parse()
-            .map_err(|_| format!("keywordpir metadata invalid value for {key}"))?;
-        match key {
-            "entry_size" => entry_size = Some(value),
-            "num_entries" => num_entries = Some(value),
-            "bucket_size" => bucket_size = Some(value),
-            "num_buckets" => num_buckets = Some(value),
-            "num_hashes" => num_hashes = Some(value),
-            "max_kicks" => max_kicks = Some(value),
-            "seed" => seed = Some(value),
-            "collision_entry_size" => collision_entry_size = Some(value),
-            "collision_count" => collision_count = Some(value),
-            "collision_num_buckets" => collision_num_buckets = Some(value),
-            _ => {}
-        }
-    }
-
-    let entry_size = entry_size.ok_or("keywordpir metadata missing entry_size")?;
-    let num_entries = num_entries.ok_or("keywordpir metadata missing num_entries")?;
-    let bucket_size = bucket_size.ok_or("keywordpir metadata missing bucket_size")?;
-    let num_buckets = num_buckets.ok_or("keywordpir metadata missing num_buckets")?;
-    let num_hashes = num_hashes.ok_or("keywordpir metadata missing num_hashes")?;
-    let max_kicks = max_kicks.ok_or("keywordpir metadata missing max_kicks")?;
-    let seed = seed.ok_or("keywordpir metadata missing seed")?;
-    let collision_entry_size =
-        collision_entry_size.ok_or("keywordpir metadata missing collision_entry_size")?;
-    let collision_count =
-        collision_count.ok_or("keywordpir metadata missing collision_count")?;
-    let collision_num_buckets = collision_num_buckets.unwrap_or(0);
-
-    let entry_size = usize::try_from(entry_size)
+    let entry_size = usize::try_from(raw.entry_size)
         .map_err(|_| "keywordpir metadata entry_size too large")?;
-    let num_entries = usize::try_from(num_entries)
+    let num_entries = usize::try_from(raw.num_entries)
         .map_err(|_| "keywordpir metadata num_entries too large")?;
-    let bucket_size = usize::try_from(bucket_size)
+    let bucket_size = usize::try_from(raw.bucket_size)
         .map_err(|_| "keywordpir metadata bucket_size too large")?;
-    let num_buckets = usize::try_from(num_buckets)
+    let num_buckets = usize::try_from(raw.num_buckets)
         .map_err(|_| "keywordpir metadata num_buckets too large")?;
-    let num_hashes = usize::try_from(num_hashes)
+    let num_hashes = usize::try_from(raw.num_hashes)
         .map_err(|_| "keywordpir metadata num_hashes too large")?;
-    let max_kicks = usize::try_from(max_kicks)
+    let max_kicks = usize::try_from(raw.max_kicks)
         .map_err(|_| "keywordpir metadata max_kicks too large")?;
-    let collision_entry_size = usize::try_from(collision_entry_size)
+    let seed = raw.seed;
+    let collision_entry_size = usize::try_from(raw.collision_entry_size)
         .map_err(|_| "keywordpir metadata collision_entry_size too large")?;
-    let collision_count = usize::try_from(collision_count)
+    let collision_count = usize::try_from(raw.collision_count)
         .map_err(|_| "keywordpir metadata collision_count too large")?;
     let collision_num_buckets = usize::try_from(collision_num_buckets)
         .map_err(|_| "keywordpir metadata collision_num_buckets too large")?;
@@ -246,6 +217,34 @@ fn read_collision_tags(path: &Path) -> Result<Vec<Tag>, Box<dyn std::error::Erro
         tags.push(Tag(tag));
     }
     Ok(tags)
+}
+
+fn keywordpir_entry_matches(
+    key: &[u8],
+    entry: &[u8],
+    entry_size: usize,
+) -> Result<bool, String> {
+    if entry.len() != entry_size {
+        return Err("keywordpir entry length mismatch".into());
+    }
+    if entry_size == ENTRY_SIZE {
+        let entry: [u8; ENTRY_SIZE] = entry
+            .try_into()
+            .map_err(|_| "keywordpir entry size mismatch".to_string())?;
+        let expected = tag_for_key(key).ok_or_else(|| "invalid key length for tag".to_string())?;
+        let actual = tag_from_entry(key.len(), &entry)
+            .ok_or_else(|| "invalid key length for entry tag".to_string())?;
+        Ok(expected == actual)
+    } else if entry_size == ENTRY_SIZE + 32 {
+        let key_hash = keywordpir_key_hash(key);
+        Ok(entry[..32] == key_hash)
+    } else {
+        Err("keywordpir entry size unsupported".into())
+    }
+}
+
+fn collision_keywordpir_entry_size(metadata: &KeywordPirMetadata) -> usize {
+    metadata.collision_entry_size
 }
 
 fn ensure_collision_server(
@@ -449,6 +448,7 @@ enum PendingKind {
 struct KeywordPendingItem {
     id: u64,
     query: Query,
+    key: Vec<u8>,
     positions: Vec<u64>,
     hint_ids: Vec<Option<usize>>,
 }
@@ -458,6 +458,16 @@ fn build_subsets_for_positions(
     coverage: Option<&Vec<Vec<u32>>>,
     positions: &[u64],
 ) -> Result<(Vec<Vec<(u32, u32)>>, Vec<Option<usize>>), Box<dyn std::error::Error>> {
+    if let Some(coverage) = coverage {
+        let max_pos = positions
+            .iter()
+            .copied()
+            .max()
+            .ok_or("keywordpir positions empty")? as usize;
+        if max_pos >= coverage.len() {
+            return Err("keywordpir coverage index too short".into());
+        }
+    }
     let mut subsets = Vec::with_capacity(positions.len() * 2);
     let mut hint_ids = Vec::with_capacity(positions.len() * 2);
     for pos in positions {
@@ -502,6 +512,7 @@ fn build_keywordpir_pending(
     Ok(KeywordPendingItem {
         id: query_id,
         query,
+        key: key.to_vec(),
         positions,
         hint_ids,
     })
@@ -635,6 +646,8 @@ fn flush_keywordpir_batch(
                 if parities.len() != item.hint_ids.len() {
                     return Err("keywordpir reply parity count mismatch".into());
                 }
+                let entry_size = client.params.entry_size;
+                let mut matched = false;
                 for (idx, (hint, parity)) in item
                     .hint_ids
                     .iter()
@@ -647,12 +660,20 @@ fn flush_keywordpir_batch(
                         .get(idx / 2)
                         .ok_or("keywordpir reply position mismatch")?;
                     let decode_start = Instant::now();
-                    if coverage_enabled {
-                        let _ = client.decode_reply_static(*real_hint, parity)?;
+                    let entry = if coverage_enabled {
+                        client.decode_reply_static(*real_hint, parity)?
                     } else {
-                        let _ = client.consume_network_reply(*pos, *real_hint, parity)?;
-                    }
+                        client.consume_network_reply(*pos, *real_hint, parity)?
+                    };
                     record("decode", decode_start.elapsed().as_micros() as u64);
+                    let ok = keywordpir_entry_matches(&item.key, &entry, entry_size)
+                        .map_err(|err| format!("keywordpir entry match error: {err}"))?;
+                    if ok {
+                        matched = true;
+                    }
+                }
+                if !matched {
+                    return Err("keywordpir entry did not match key".into());
                 }
             }
             Reply::Rms24 { .. } => return Err("unexpected rms24 reply".into()),
@@ -777,6 +798,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if metadata.bucket_size == 0 {
             return Err("keywordpir metadata bucket_size must be >0".into());
         }
+        if metadata.num_buckets == 0 {
+            return Err("keywordpir metadata num_buckets must be >0".into());
+        }
+        if metadata.num_hashes == 0 {
+            return Err("keywordpir metadata num_hashes must be >0".into());
+        }
         if metadata.collision_entry_size == 0 {
             return Err("keywordpir metadata collision_entry_size must be >0".into());
         }
@@ -890,7 +917,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 collision_keyword_client = Some(KeywordPirClient::new(KeywordPirParams {
                     cfg: collision_cfg,
-                    entry_size: metadata.entry_size,
+                    entry_size: collision_keywordpir_entry_size(&metadata),
                 }));
                 collision_client = Some(load_or_generate_client(
                     &collision_db,
@@ -1054,6 +1081,17 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
+    fn entry_with_tag_for_key(key: &[u8]) -> [u8; ENTRY_SIZE] {
+        let mut entry = [0u8; ENTRY_SIZE];
+        let tag = tag_for_key(key).expect("valid key length");
+        match key.len() {
+            20 => entry[24..32].copy_from_slice(tag.as_bytes()),
+            52 => entry[32..40].copy_from_slice(tag.as_bytes()),
+            _ => panic!("unsupported key length"),
+        }
+        entry
+    }
+
     fn write_temp_metadata(contents: &str) -> PathBuf {
         let mut path = std::env::temp_dir();
         let nanos = std::time::SystemTime::now()
@@ -1124,6 +1162,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_keywordpir_metadata_accepts_minified_json() {
+        let path = write_temp_metadata("{\"entry_size\":40,\"num_entries\":4,\"bucket_size\":2,\"num_buckets\":2,\"num_hashes\":2,\"max_kicks\":8,\"seed\":1,\"collision_entry_size\":72,\"collision_count\":0,\"collision_num_buckets\":0}");
+        let metadata = parse_keywordpir_metadata(&path).unwrap();
+        assert_eq!(metadata.num_entries, 4);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn test_parse_keywordpir_metadata_rejects_undersized_collision_table() {
         let path = write_temp_metadata(
             "{\n  \"entry_size\": 40,\n  \"num_entries\": 4,\n  \"bucket_size\": 2,\n  \"num_buckets\": 2,\n  \"num_hashes\": 2,\n  \"max_kicks\": 8,\n  \"seed\": 1,\n  \"collision_entry_size\": 72,\n  \"collision_count\": 3,\n  \"collision_num_buckets\": 1\n}\n",
@@ -1135,6 +1181,64 @@ mod tests {
             }
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_collision_keywordpir_entry_size_uses_collision_entry_size() {
+        let metadata = KeywordPirMetadata {
+            entry_size: 40,
+            num_entries: 4,
+            bucket_size: 2,
+            num_buckets: 2,
+            num_hashes: 2,
+            max_kicks: 8,
+            seed: 1,
+            collision_entry_size: 72,
+            collision_count: 0,
+            collision_num_buckets: 0,
+        };
+        assert_eq!(
+            collision_keywordpir_entry_size(&metadata),
+            metadata.collision_entry_size
+        );
+    }
+
+    #[test]
+    fn test_keywordpir_entry_matches_tag() {
+        let key = vec![0x11u8; 20];
+        let entry = entry_with_tag_for_key(&key);
+        let ok = keywordpir_entry_matches(&key, &entry, ENTRY_SIZE).unwrap();
+        assert!(ok);
+    }
+
+    #[test]
+    fn test_keywordpir_entry_rejects_tag_mismatch() {
+        let key = vec![0x11u8; 20];
+        let mut entry = entry_with_tag_for_key(&key);
+        entry[24] ^= 0xFF;
+        let ok = keywordpir_entry_matches(&key, &entry, ENTRY_SIZE).unwrap();
+        assert!(!ok);
+    }
+
+    #[test]
+    fn test_keywordpir_entry_matches_collision_key_hash() {
+        let key = vec![0x22u8; 20];
+        let key_hash = keywordpir_key_hash(&key);
+        let mut entry = vec![0u8; ENTRY_SIZE + 32];
+        entry[..32].copy_from_slice(&key_hash);
+        let ok = keywordpir_entry_matches(&key, &entry, ENTRY_SIZE + 32).unwrap();
+        assert!(ok);
+    }
+
+    #[test]
+    fn test_keywordpir_entry_rejects_collision_hash_mismatch() {
+        let key = vec![0x33u8; 20];
+        let mut key_hash = keywordpir_key_hash(&key);
+        key_hash[0] ^= 0xFF;
+        let mut entry = vec![0u8; ENTRY_SIZE + 32];
+        entry[..32].copy_from_slice(&key_hash);
+        let ok = keywordpir_entry_matches(&key, &entry, ENTRY_SIZE + 32).unwrap();
+        assert!(!ok);
     }
 
     #[test]
@@ -1361,6 +1465,20 @@ mod tests {
             Query::KeywordPir { subsets, .. } => assert!(!subsets.is_empty()),
             _ => panic!("expected keywordpir query"),
         }
+    }
+
+    #[test]
+    fn test_build_subsets_for_positions_rejects_short_coverage() {
+        let params = Params::new(8, 4, 2);
+        let prf = prf_from_seed(4);
+        let mut online = OnlineClient::new(params.clone(), prf, 4);
+        let db = vec![0u8; params.num_entries as usize * params.entry_size];
+        online.generate_hints(&db).unwrap();
+        let coverage = vec![Vec::new(); 1];
+        let positions = vec![3u64];
+        let err = build_subsets_for_positions(&mut online, Some(&coverage), &positions)
+            .unwrap_err();
+        assert!(err.to_string().contains("coverage index"));
     }
 
     #[test]
