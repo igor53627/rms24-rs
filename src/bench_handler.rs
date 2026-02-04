@@ -35,6 +35,12 @@ fn handle_single<D: Db>(server: &Server<D>, query: Query, max_batch: usize) -> S
             }
         }
         Query::KeywordPir { id, subsets } => {
+            if subsets.is_empty() || subsets.iter().any(|subset| subset.is_empty()) {
+                return ServerFrame::Reply(Reply::Error {
+                    id,
+                    message: "keywordpir subsets must be non-empty".to_string(),
+                });
+            }
             if subsets.len() > max_batch {
                 return ServerFrame::Reply(Reply::Error {
                     id,
@@ -92,24 +98,31 @@ fn handle_batch<D: Db>(server: &Server<D>, batch: BatchRequest, max_batch: usize
                 }
             }
             Query::KeywordPir { id, subsets } => {
-                let mut parities = Vec::with_capacity(subsets.len());
-                let mut err_out = None;
-                for subset in subsets {
-                    let rms_query = RmsQuery { id, subset };
-                    match server.answer(&rms_query) {
-                        Ok(reply) => parities.push(reply.parity),
-                        Err(err) => {
-                            err_out = Some(err);
-                            break;
+                if subsets.is_empty() || subsets.iter().any(|subset| subset.is_empty()) {
+                    Reply::Error {
+                        id,
+                        message: "keywordpir subsets must be non-empty".to_string(),
+                    }
+                } else {
+                    let mut parities = Vec::with_capacity(subsets.len());
+                    let mut err_out = None;
+                    for subset in subsets {
+                        let rms_query = RmsQuery { id, subset };
+                        match server.answer(&rms_query) {
+                            Ok(reply) => parities.push(reply.parity),
+                            Err(err) => {
+                                err_out = Some(err);
+                                break;
+                            }
                         }
                     }
-                }
-                match err_out {
-                    Some(err) => Reply::Error {
-                        id,
-                        message: err.to_string(),
-                    },
-                    None => Reply::KeywordPir { id, parities },
+                    match err_out {
+                        Some(err) => Reply::Error {
+                            id,
+                            message: err.to_string(),
+                        },
+                        None => Reply::KeywordPir { id, parities },
+                    }
                 }
             }
         };
@@ -200,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_keywordpir_empty_subset_allowed() {
+    fn test_handle_keywordpir_empty_subset_rejected() {
         let db = InMemoryDb::new(vec![1, 2, 3, 4], 2).unwrap();
         let server = Server::new(db, 2).unwrap();
         let query = Query::KeywordPir {
@@ -209,16 +222,15 @@ mod tests {
         };
         let out = handle_client_frame(&server, ClientFrame::Query(query), 8);
         match out {
-            ServerFrame::Reply(Reply::KeywordPir { id, parities }) => {
-                assert_eq!(id, 9);
-                assert_eq!(parities, vec![vec![0, 0]]);
+            ServerFrame::Reply(Reply::Error { message, .. }) => {
+                assert!(message.contains("keywordpir subsets"));
             }
-            _ => panic!("expected keywordpir reply"),
+            _ => panic!("expected keywordpir error reply"),
         }
     }
 
     #[test]
-    fn test_batch_keywordpir_queries() {
+    fn test_batch_keywordpir_queries_reject_empty() {
         let db = InMemoryDb::new(vec![1, 2, 3, 4], 2).unwrap();
         let server = Server::new(db, 2).unwrap();
         let ok = Query::KeywordPir {
@@ -245,11 +257,10 @@ mod tests {
                     _ => panic!("expected keywordpir reply"),
                 }
                 match &batch.replies[1] {
-                    Reply::KeywordPir { id, parities } => {
-                        assert_eq!(*id, 2);
-                        assert_eq!(parities, &vec![vec![0, 0]]);
+                    Reply::Error { message, .. } => {
+                        assert!(message.contains("keywordpir subsets"));
                     }
-                    _ => panic!("expected keywordpir reply"),
+                    _ => panic!("expected keywordpir error reply"),
                 }
             }
             _ => panic!("expected batch reply"),

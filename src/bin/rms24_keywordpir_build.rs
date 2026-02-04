@@ -10,7 +10,7 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 
 const COLLISION_ENTRY_SIZE: usize = 72;
-const TARGET_LOAD_FACTOR: f64 = 0.90;
+const TARGET_LOAD_PERCENT: u128 = 90;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -41,11 +41,15 @@ struct EntryRecord {
 }
 
 fn buckets_for_entries(count: usize, bucket_size: usize) -> usize {
-    if count == 0 {
+    if count == 0 || bucket_size == 0 {
         return 0;
     }
-    let target_entries = (count as f64 / TARGET_LOAD_FACTOR).ceil() as usize;
-    (target_entries + bucket_size - 1) / bucket_size
+    let count_u128 = count as u128;
+    let bucket_u128 = bucket_size as u128;
+    let target_entries =
+        (count_u128 * 100 + (TARGET_LOAD_PERCENT - 1)) / TARGET_LOAD_PERCENT;
+    let buckets = (target_entries + bucket_u128 - 1) / bucket_u128;
+    usize::try_from(buckets).unwrap_or(usize::MAX)
 }
 
 fn read_mapping_entries(
@@ -245,5 +249,14 @@ mod tests {
     fn test_buckets_for_entries_adds_slack() {
         let buckets = buckets_for_entries(10, 2);
         assert_eq!(buckets, 6);
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn test_buckets_for_entries_large_count_precision() {
+        let count = (1usize << 53) + 1;
+        let buckets = buckets_for_entries(count, 2);
+        let expected = 5003999585967219usize;
+        assert_eq!(buckets, expected);
     }
 }
