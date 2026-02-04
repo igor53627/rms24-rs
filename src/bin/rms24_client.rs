@@ -166,8 +166,7 @@ fn parse_keywordpir_metadata(
         collision_entry_size.ok_or("keywordpir metadata missing collision_entry_size")?;
     let collision_count =
         collision_count.ok_or("keywordpir metadata missing collision_count")?;
-    let collision_num_buckets =
-        collision_num_buckets.ok_or("keywordpir metadata missing collision_num_buckets")?;
+    let collision_num_buckets = collision_num_buckets.unwrap_or(0);
 
     let entry_size = usize::try_from(entry_size)
         .map_err(|_| "keywordpir metadata entry_size too large")?;
@@ -187,6 +186,15 @@ fn parse_keywordpir_metadata(
         .map_err(|_| "keywordpir metadata collision_count too large")?;
     let collision_num_buckets = usize::try_from(collision_num_buckets)
         .map_err(|_| "keywordpir metadata collision_num_buckets too large")?;
+    if collision_num_buckets > 0 {
+        let capacity = collision_num_buckets
+            .checked_mul(bucket_size)
+            .ok_or("keywordpir metadata collision table size overflow")?;
+        if collision_count > capacity {
+            return Err("keywordpir metadata collision_count exceeds collision table capacity"
+                .into());
+        }
+    }
 
     Ok(KeywordPirMetadata {
         entry_size,
@@ -841,13 +849,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     metadata.collision_entry_size,
                     args.lambda,
                 )?;
-                let collision_buckets = metadata.collision_num_buckets;
+                let collision_buckets = if metadata.collision_num_buckets > 0 {
+                    metadata.collision_num_buckets
+                } else {
+                    let buckets = collision_num_entries / metadata.bucket_size;
+                    if buckets
+                        .checked_mul(metadata.bucket_size)
+                        .ok_or("collision table size overflow")?
+                        != collision_num_entries
+                    {
+                        return Err("collision db entries not aligned to bucket size".into());
+                    }
+                    buckets
+                };
                 if collision_buckets == 0 {
                     return Err("collision num_buckets must be >0".into());
                 }
                 let expected_collision_entries = collision_buckets
                     .checked_mul(metadata.bucket_size)
                     .ok_or("collision table size overflow")?;
+                if metadata.collision_count > expected_collision_entries {
+                    return Err(
+                        "keywordpir metadata collision_count exceeds collision table capacity"
+                            .into(),
+                    );
+                }
                 if collision_num_entries != expected_collision_entries {
                     return Err(format!(
                         "collision table entries {} do not match expected {}",
@@ -1088,16 +1114,24 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_keywordpir_metadata_requires_collision_num_buckets() {
+    fn test_parse_keywordpir_metadata_allows_missing_collision_num_buckets() {
         let path = write_temp_metadata(
             "{\n  \"entry_size\": 40,\n  \"num_entries\": 4,\n  \"bucket_size\": 2,\n  \"num_buckets\": 2,\n  \"num_hashes\": 2,\n  \"max_kicks\": 8,\n  \"seed\": 1,\n  \"collision_entry_size\": 72,\n  \"collision_count\": 0\n}\n",
+        );
+        let metadata = parse_keywordpir_metadata(&path).unwrap();
+        assert_eq!(metadata.collision_num_buckets, 0);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_parse_keywordpir_metadata_rejects_undersized_collision_table() {
+        let path = write_temp_metadata(
+            "{\n  \"entry_size\": 40,\n  \"num_entries\": 4,\n  \"bucket_size\": 2,\n  \"num_buckets\": 2,\n  \"num_hashes\": 2,\n  \"max_kicks\": 8,\n  \"seed\": 1,\n  \"collision_entry_size\": 72,\n  \"collision_count\": 3,\n  \"collision_num_buckets\": 1\n}\n",
         );
         match parse_keywordpir_metadata(&path) {
             Ok(_) => panic!("expected metadata error"),
             Err(err) => {
-                assert!(err
-                    .to_string()
-                    .contains("keywordpir metadata missing collision_num_buckets"));
+                assert!(err.to_string().contains("collision_count exceeds"));
             }
         }
         let _ = std::fs::remove_file(&path);
