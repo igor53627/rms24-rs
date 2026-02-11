@@ -43,3 +43,6 @@ name = "generate_subsets"
 [[bin]]
 name = "run_gpu_kernel"
 required-features = ["cuda"]
+
+[[bin]]
+name = "rms24_cost"
