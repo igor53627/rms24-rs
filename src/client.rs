@@ -1138,7 +1138,7 @@ mod tests {
     #[test]
     fn test_online_client_build_and_consume_network_query() {
         let params = Params::new(16, 4, 4);
-        let prf = Prf::random();
+        let prf = Prf::new([0u8; 32]);
         let mut client = OnlineClient::new(params.clone(), prf, 1);
 
         let db = vec![7u8; (params.num_entries as usize) * params.entry_size];
@@ -1346,7 +1346,7 @@ mod tests {
     fn test_point_update_round_trip() {
         let params = Params::new(8, 4, 2);
         let db = vec![0u8; (params.num_entries as usize) * params.entry_size];
-        let prf = Prf::random();
+        let prf = Prf::new([1u8; 32]);
         let mut offline = Client::with_prf(params.clone(), prf.clone());
         offline.generate_hints(&db);
         let mut client = OnlineClient::new(params.clone(), prf, 1);
