@@ -1,7 +1,7 @@
 //! RMS24 single-server PIR implementation.
 //!
 //! Based on "Simple and Practical Amortized Sublinear Private Information
-//! Retrieval" (https://eprint.iacr.org/2024/1362).
+//! Retrieval" (<https://eprint.iacr.org/2024/1362>).
 
 pub mod params;
 pub mod prf;

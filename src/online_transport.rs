@@ -3,20 +3,26 @@ use crate::online_framing::{read_frame, write_frame};
 use serde::{de::DeserializeOwned, Serialize};
 use std::io::{Read, Write};
 
+/// Trait for sending and receiving bincode-serialized messages over a framed stream.
 pub trait Transport {
+    /// Serialize and send a value.
     fn send<T: Serialize>(&mut self, value: &T) -> Result<(), OnlineError>;
+    /// Receive and deserialize a value.
     fn recv<T: DeserializeOwned>(&mut self) -> Result<T, OnlineError>;
 }
 
+/// [`Transport`] implementation backed by a length-framed `Read + Write` stream.
 pub struct FramedIo<RW> {
     inner: RW,
 }
 
 impl<RW> FramedIo<RW> {
+    /// Wrap a stream.
     pub fn new(inner: RW) -> Self {
         Self { inner }
     }
 
+    /// Unwrap the inner stream.
     pub fn into_inner(self) -> RW {
         self.inner
     }

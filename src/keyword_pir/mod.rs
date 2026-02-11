@@ -10,12 +10,14 @@ impl Hash for Tag {
     }
 }
 
+/// A key-to-index mapping record parsed from the keyword PIR mapping file.
 #[derive(Clone, Debug)]
 pub struct MappingRecord {
     pub key: Vec<u8>,
     pub index: u64,
 }
 
+/// Parse a mapping record from raw bytes (key_size bytes of key + 4 bytes LE index).
 pub fn parse_mapping_record(record: &[u8], key_size: usize) -> Option<MappingRecord> {
     if record.len() < key_size + 4 {
         return None;
@@ -26,6 +28,7 @@ pub fn parse_mapping_record(record: &[u8], key_size: usize) -> Option<MappingRec
     Some(MappingRecord { key, index })
 }
 
+/// Compute the 8-byte TAG fingerprint for an account (20-byte) or storage (52-byte) key.
 pub fn tag_for_key(key: &[u8]) -> Option<Tag> {
     match key.len() {
         20 => {
@@ -44,6 +47,7 @@ pub fn tag_for_key(key: &[u8]) -> Option<Tag> {
     }
 }
 
+/// Extract the TAG fingerprint from a 40-byte database entry.
 pub fn tag_from_entry(key_len: usize, entry: &[u8; ENTRY_SIZE]) -> Option<Tag> {
     match key_len {
         20 => {
@@ -60,6 +64,7 @@ pub fn tag_from_entry(key_len: usize, entry: &[u8; ENTRY_SIZE]) -> Option<Tag> {
     }
 }
 
+/// Configuration for cuckoo hash table construction.
 #[derive(Clone, Debug)]
 pub struct CuckooConfig {
     pub num_buckets: usize,
@@ -70,6 +75,7 @@ pub struct CuckooConfig {
 }
 
 impl CuckooConfig {
+    /// Create a cuckoo config with the given parameters.
     pub fn new(
         num_buckets: usize,
         bucket_size: usize,
@@ -87,6 +93,7 @@ impl CuckooConfig {
     }
 }
 
+/// Compute the candidate bucket indices for a key under the cuckoo config.
 pub fn cuckoo_positions(key: &[u8], cfg: &CuckooConfig) -> Vec<usize> {
     if cfg.num_buckets == 0 || cfg.num_hashes == 0 {
         return Vec::new();
@@ -117,12 +124,14 @@ fn hash_key(key: &[u8]) -> [u8; 32] {
     out
 }
 
+/// A slot in the cuckoo table holding a hashed key and its 40-byte value.
 #[derive(Clone, Debug)]
 pub struct CuckooSlot {
     pub key_hash: [u8; 32],
     pub value: [u8; 40],
 }
 
+/// Cuckoo hash table mapping keys to 40-byte entries.
 #[derive(Clone, Debug)]
 pub struct CuckooTable {
     cfg: CuckooConfig,
@@ -130,6 +139,7 @@ pub struct CuckooTable {
 }
 
 impl CuckooTable {
+    /// Create an empty cuckoo table with the given config.
     pub fn new(cfg: CuckooConfig) -> Self {
         let total = cfg.num_buckets * cfg.bucket_size;
         Self {
@@ -138,6 +148,7 @@ impl CuckooTable {
         }
     }
 
+    /// Insert a key-value pair, using cuckoo eviction if buckets are full.
     pub fn insert(&mut self, key: &[u8], value: [u8; 40]) -> Result<(), String> {
         if self.cfg.num_buckets == 0 || self.cfg.num_hashes == 0 || self.cfg.bucket_size == 0 {
             return Err("invalid cuckoo config".into());
@@ -191,6 +202,7 @@ impl CuckooTable {
         Err("cuckoo insertion failed".into())
     }
 
+    /// Look up a candidate entry by key hash (no tag verification).
     pub fn find_candidate(&self, key: &[u8]) -> Option<[u8; 40]> {
         let key_hash = hash_key(key);
         let positions = cuckoo_positions(&key_hash, &self.cfg);
@@ -210,6 +222,7 @@ impl CuckooTable {
         None
     }
 
+    /// Serialize all slots as concatenated 40-byte entries (empty slots are zeroed).
     pub fn to_entry_bytes(&self) -> Vec<u8> {
         let mut out = vec![0u8; self.slots.len() * ENTRY_SIZE];
         for (idx, slot) in self.slots.iter().enumerate() {
@@ -221,6 +234,7 @@ impl CuckooTable {
         out
     }
 
+    /// Serialize all slots as concatenated 72-byte collision entries (32-byte hash + 40-byte value).
     pub fn to_collision_bytes(&self) -> Vec<u8> {
         let mut out = vec![0u8; self.slots.len() * COLLISION_ENTRY_SIZE];
         for (idx, slot) in self.slots.iter().enumerate() {
@@ -236,12 +250,14 @@ impl CuckooTable {
 
 const COLLISION_ENTRY_SIZE: usize = 72;
 
+/// Parameters for the keyword PIR layer.
 #[derive(Clone, Debug)]
 pub struct KeywordPirParams {
     pub cfg: CuckooConfig,
     pub entry_size: usize,
 }
 
+/// Client for keyword PIR queries over a cuckoo-hashed database.
 pub struct KeywordPirClient {
     params: KeywordPirParams,
     collision_tags: HashSet<Tag>,
@@ -249,6 +265,7 @@ pub struct KeywordPirClient {
 }
 
 impl KeywordPirClient {
+    /// Create a keyword PIR client with the given parameters.
     pub fn new(params: KeywordPirParams) -> Self {
         Self {
             params,
@@ -257,14 +274,17 @@ impl KeywordPirClient {
         }
     }
 
+    /// Set the set of tags that require collision-table lookup.
     pub fn set_collision_tags(&mut self, tags: Vec<Tag>) {
         self.collision_tags = tags.into_iter().collect();
     }
 
+    /// Set the serialized collision table bytes.
     pub fn set_collision_table(&mut self, table: Vec<u8>) {
         self.collision_table = Some(table);
     }
 
+    /// Return all cuckoo slot indices that could contain the given key.
     pub fn positions_for_key(&self, key: &[u8]) -> Vec<usize> {
         let key_hash = hash_key(key);
         let buckets = cuckoo_positions(&key_hash, &self.params.cfg);
@@ -277,6 +297,7 @@ impl KeywordPirClient {
         positions
     }
 
+    /// Query a local cuckoo table for the entry matching the given key.
     pub fn query_local(&self, key: &[u8], table: &CuckooTable) -> Result<[u8; 40], String> {
         self.ensure_entry_size()?;
         let expected_tag = self.expected_tag(key)?;
@@ -302,6 +323,7 @@ impl KeywordPirClient {
         Err("no matching entry found".into())
     }
 
+    /// Query the entry for a key over the network using RMS24 PIR.
     pub fn query_network(
         &mut self,
         key: &[u8],

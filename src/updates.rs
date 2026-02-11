@@ -4,12 +4,16 @@ use crate::hints::{xor_bytes_inplace, HintState};
 use crate::params::Params;
 use crate::prf::Prf;
 
+/// Result of promoting a backup hint to replace a consumed regular hint.
 pub struct ReplenishResult {
     pub cutoff: u32,
     pub flip: bool,
     pub parity: Vec<u8>,
 }
 
+/// Promote a backup hint to a regular hint covering the target entry.
+///
+/// Returns `None` if the backup hint is invalid or the target entry size mismatches.
 pub fn replenish_from_backup(
     params: &Params,
     prf: &Prf,

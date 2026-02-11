@@ -1,5 +1,6 @@
 use std::io::{self, Read, Write};
 
+/// Write a length-prefixed frame (little-endian u32 length + payload).
 pub fn write_frame<W: Write>(mut w: W, payload: &[u8]) -> io::Result<()> {
     if payload.is_empty() {
         return Err(io::Error::new(
@@ -20,6 +21,7 @@ pub fn write_frame<W: Write>(mut w: W, payload: &[u8]) -> io::Result<()> {
 
 const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024;
 
+/// Read a length-prefixed frame, rejecting empty or oversized payloads.
 pub fn read_frame<R: Read>(mut r: R) -> io::Result<Vec<u8>> {
     let mut len_bytes = [0u8; 4];
     r.read_exact(&mut len_bytes)?;
