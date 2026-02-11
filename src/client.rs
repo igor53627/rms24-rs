@@ -176,7 +176,7 @@ impl Client {
                             0.0
                         };
                         let pct = done as f64 * 100.0 / total_hints.max(1) as f64;
-                        println!(
+                        log::info!(
                             "progress phase=phase1 pct={:.1} elapsed_s={:.0} eta_s={:.0}",
                             pct, elapsed, eta
                         );
@@ -286,7 +286,7 @@ impl Client {
                             0.0
                         };
                         let pct = done as f64 * 100.0 / total_hints.max(1) as f64;
-                        println!(
+                        log::info!(
                             "progress phase=phase2 pct={:.1} elapsed_s={:.0} eta_s={:.0}",
                             pct, elapsed, eta
                         );

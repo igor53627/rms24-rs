@@ -188,6 +188,7 @@ impl CuckooTable {
                 }
             }
         }
+        log::warn!("cuckoo insertion failed after {} kicks", self.cfg.max_kicks);
         Err("cuckoo insertion failed".into())
     }
 

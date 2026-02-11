@@ -73,6 +73,7 @@ impl<D: Db> Server<D> {
 
     pub fn answer(&self, query: &Query) -> Result<Reply, ServerError> {
         if query.subset.len() > self.max_subset_len {
+            log::warn!("query id={} subset too large: {} > {}", query.id, query.subset.len(), self.max_subset_len);
             return Err(ServerError::SubsetOutOfRange);
         }
         let mut parity = vec![0u8; self.db.entry_size()];
