@@ -23,7 +23,7 @@ pub struct Rms24Params {
     pub num_reg_hints: u32,
     pub num_backup_hints: u32,
     pub total_hints: u32,
-    pub _padding: u32,  // Align to 8 bytes
+    pub _padding: u32, // Align to 8 bytes
 }
 
 #[cfg(feature = "cuda")]

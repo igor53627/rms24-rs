@@ -228,9 +228,7 @@ impl CodeStore {
             let mut hash = [0u8; 32];
             hash.copy_from_slice(&bytes[offset..offset + 32]);
             store.hashes.push(hash);
-            store
-                .hash_to_id
-                .insert(hash, CodeId((i + 1) as u32));
+            store.hash_to_id.insert(hash, CodeId((i + 1) as u32));
         }
         Ok(store)
     }
@@ -247,7 +245,10 @@ mod tests {
             BALANCE_SIZE + NONCE_SIZE + CODE_ID_SIZE + TAG_SIZE + ACCOUNT_PADDING_SIZE,
             ENTRY_SIZE
         );
-        assert_eq!(STORAGE_VALUE_SIZE + TAG_SIZE + STORAGE_PADDING_SIZE, ENTRY_SIZE);
+        assert_eq!(
+            STORAGE_VALUE_SIZE + TAG_SIZE + STORAGE_PADDING_SIZE,
+            ENTRY_SIZE
+        );
     }
 
     #[test]

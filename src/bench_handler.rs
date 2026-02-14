@@ -150,9 +150,17 @@ mod tests {
 
         let ok_id = 1;
         let bad_id = 2;
-        let ok = Query::Rms24 { id: ok_id, subset: vec![(0, 0)] };
-        let bad = Query::Rms24 { id: bad_id, subset: vec![(9, 0)] };
-        let frame = ClientFrame::BatchRequest(BatchRequest { queries: vec![ok.clone(), bad.clone()] });
+        let ok = Query::Rms24 {
+            id: ok_id,
+            subset: vec![(0, 0)],
+        };
+        let bad = Query::Rms24 {
+            id: bad_id,
+            subset: vec![(9, 0)],
+        };
+        let frame = ClientFrame::BatchRequest(BatchRequest {
+            queries: vec![ok.clone(), bad.clone()],
+        });
         let out = handle_client_frame(&server, frame, 8);
 
         match out {
@@ -183,8 +191,14 @@ mod tests {
         let server = Server::new(db, 2).unwrap();
         let frame = ClientFrame::BatchRequest(BatchRequest {
             queries: vec![
-                Query::Rms24 { id: 1, subset: vec![(0, 0)] },
-                Query::Rms24 { id: 2, subset: vec![(0, 1)] },
+                Query::Rms24 {
+                    id: 1,
+                    subset: vec![(0, 0)],
+                },
+                Query::Rms24 {
+                    id: 2,
+                    subset: vec![(0, 1)],
+                },
             ],
         });
         let out = handle_client_frame(&server, frame, 1);

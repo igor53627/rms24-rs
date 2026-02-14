@@ -20,7 +20,7 @@ pub struct Params {
 impl Params {
     pub fn new(num_entries: u64, entry_size: usize, security_param: u32) -> Self {
         let block_size = (num_entries as f64).sqrt().ceil() as u64;
-        let mut num_blocks = (num_entries + block_size - 1) / block_size;
+        let mut num_blocks = num_entries.div_ceil(block_size);
         if num_blocks % 2 == 1 {
             num_blocks += 1; // Must be even
         }

@@ -42,7 +42,11 @@ mod tests {
 
     #[test]
     fn test_framed_send_recv_roundtrip() {
-        let cfg = RunConfig { mode: Mode::Rms24, lambda: 80, entry_size: 40 };
+        let cfg = RunConfig {
+            mode: Mode::Rms24,
+            lambda: 80,
+            entry_size: 40,
+        };
         let mut io = FramedIo::new(Cursor::new(Vec::new()));
         io.send(&cfg).unwrap();
         let inner = io.into_inner().into_inner();

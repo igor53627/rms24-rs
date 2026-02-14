@@ -60,9 +60,8 @@ fn buckets_for_entries(count: usize, bucket_size: usize) -> usize {
     }
     let count_u128 = count as u128;
     let bucket_u128 = bucket_size as u128;
-    let target_entries =
-        (count_u128 * 100 + (TARGET_LOAD_PERCENT - 1)) / TARGET_LOAD_PERCENT;
-    let buckets = (target_entries + bucket_u128 - 1) / bucket_u128;
+    let target_entries = (count_u128 * 100).div_ceil(TARGET_LOAD_PERCENT);
+    let buckets = target_entries.div_ceil(bucket_u128);
     usize::try_from(buckets).unwrap_or(usize::MAX)
 }
 
@@ -74,7 +73,7 @@ fn read_mapping_entries(
     let file = File::open(path)?;
     let len = file.metadata()?.len() as usize;
     let record_size = key_size + 4;
-    if record_size == 0 || len % record_size != 0 {
+    if record_size == 0 || !len.is_multiple_of(record_size) {
         return Err(format!("mapping file {path} has invalid length").into());
     }
     let count = len / record_size;
@@ -85,8 +84,8 @@ fn read_mapping_entries(
     let mut out = Vec::with_capacity(count);
     for _ in 0..count {
         reader.read_exact(&mut buf)?;
-        let record = parse_mapping_record(&buf, key_size)
-            .ok_or("mapping record shorter than expected")?;
+        let record =
+            parse_mapping_record(&buf, key_size).ok_or("mapping record shorter than expected")?;
         let index = record.index as usize;
         if index >= num_entries {
             return Err(format!("mapping index {index} out of range").into());
@@ -96,8 +95,8 @@ fn read_mapping_entries(
         entry.copy_from_slice(&db[offset..offset + ENTRY_SIZE]);
 
         let tag = tag_for_key(&record.key).ok_or("invalid key length for tag")?;
-        let entry_tag = tag_from_entry(record.key.len(), &entry)
-            .ok_or("invalid key length for entry tag")?;
+        let entry_tag =
+            tag_from_entry(record.key.len(), &entry).ok_or("invalid key length for entry tag")?;
         if tag != entry_tag {
             return Err(format!("tag mismatch for mapping index {index}").into());
         }
@@ -192,7 +191,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut tag_map: HashMap<Tag, Vec<Vec<u8>>> = HashMap::new();
     for record in &entries {
-        tag_map.entry(record.tag).or_default().push(record.key.clone());
+        tag_map
+            .entry(record.tag)
+            .or_default()
+            .push(record.key.clone());
     }
     let mut collision_tags: Vec<Tag> = tag_map
         .iter()
@@ -224,7 +226,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             args.seed,
         );
         let mut collision_table = CuckooTable::new(collision_cfg);
-        for record in entries.iter().filter(|record| collision_set.contains(&record.tag)) {
+        for record in entries
+            .iter()
+            .filter(|record| collision_set.contains(&record.tag))
+        {
             collision_table.insert(&record.key, record.entry)?;
         }
         fs::write(

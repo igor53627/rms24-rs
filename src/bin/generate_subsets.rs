@@ -52,7 +52,12 @@ fn main() -> io::Result<()> {
     };
 
     let num_entries = db_size / args.entry_size;
-    println!("Database: {} ({:.2} GB, {} entries)", args.db, db_size as f64 / 1e9, num_entries);
+    println!(
+        "Database: {} ({:.2} GB, {} entries)",
+        args.db,
+        db_size as f64 / 1e9,
+        num_entries
+    );
 
     let params = Params::new(num_entries as u64, args.entry_size, args.lambda);
     println!("Block size: {}", params.block_size);

@@ -1,7 +1,7 @@
-use rms24::{OnlineClient, Params, Prf};
 use rms24::client::Client;
 use rms24::schema40::Tag;
 use rms24::server::{InMemoryDb, Server};
+use rms24::{OnlineClient, Params, Prf};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -201,11 +201,7 @@ fn test_real_slice_sequential_optional() {
             params.block_of(target.index) as u32,
             params.offset_in_block(target.index) as u32,
         );
-        let candidates_before = count_candidate_hints(
-            &client,
-            target_block,
-            target_offset,
-        );
+        let candidates_before = count_candidate_hints(&client, target_block, target_offset);
         let got = client.query(&server, target.index).unwrap();
         let start = target.index as usize * entry_size;
         let expected = db[start..start + entry_size].to_vec();
@@ -253,7 +249,11 @@ fn collect_candidate_indices(
         for block in 0..num_blocks {
             let select = client.prf.select(prf_id, block);
             let offset = (client.prf.offset(prf_id, block) % block_size) as u32;
-            let is_selected = if flipped { select >= cutoff } else { select < cutoff };
+            let is_selected = if flipped {
+                select >= cutoff
+            } else {
+                select < cutoff
+            };
             if !is_selected {
                 continue;
             }
@@ -331,7 +331,11 @@ fn count_candidate_hints(client: &OnlineClient, block: u32, offset: u32) -> usiz
         let select = client.prf.select(prf_id, block);
         let picked_offset = (client.prf.offset(prf_id, block) % block_size) as u32;
         let flipped = client.hints.flips[hint_id];
-        let is_selected = if flipped { select >= cutoff } else { select < cutoff };
+        let is_selected = if flipped {
+            select >= cutoff
+        } else {
+            select < cutoff
+        };
         let matches_selected = is_selected && picked_offset == offset;
         let matches_extra = client.hints.extra_blocks[hint_id] == block
             && client.hints.extra_offsets[hint_id] == offset;

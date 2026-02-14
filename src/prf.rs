@@ -37,8 +37,8 @@ impl Prf {
     /// Get key as 8 x u32 (for GPU kernel).
     pub fn key_u32(&self) -> [u32; 8] {
         let mut result = [0u32; 8];
-        for i in 0..8 {
-            result[i] = u32::from_le_bytes(self.key[i * 4..(i + 1) * 4].try_into().unwrap());
+        for (i, item) in result.iter_mut().enumerate() {
+            *item = u32::from_le_bytes(self.key[i * 4..(i + 1) * 4].try_into().unwrap());
         }
         result
     }
@@ -78,10 +78,10 @@ impl Prf {
 
     /// Compute select and offset values for all blocks into provided vectors, reusing byte buffers.
     pub fn fill_select_and_offset_reused(
-        &self, 
-        hint_id: u32, 
-        num_blocks: u32, 
-        selects: &mut Vec<u32>, 
+        &self,
+        hint_id: u32,
+        num_blocks: u32,
+        selects: &mut Vec<u32>,
         offsets: &mut Vec<u64>,
         select_bytes: &mut Vec<u8>,
         offset_bytes: &mut Vec<u8>,
@@ -90,7 +90,7 @@ impl Prf {
         offsets.resize(num_blocks as usize, 0);
         select_bytes.resize(num_blocks as usize * 64, 0);
         offset_bytes.resize(num_blocks as usize * 64, 0);
-        
+
         // Zero out bytes to ensure apply_keystream works correctly if it only XORs
         // Actually chacha20 crate's apply_keystream XORs into the buffer.
         // So we MUST zero it.
@@ -112,16 +112,22 @@ impl Prf {
         offset_cipher.apply_keystream(offset_bytes);
 
         for i in 0..num_blocks as usize {
-            selects[i] = u32::from_le_bytes(select_bytes[i*64..i*64+4].try_into().unwrap());
-            offsets[i] = u64::from_le_bytes(offset_bytes[i*64..i*64+8].try_into().unwrap());
+            selects[i] = u32::from_le_bytes(select_bytes[i * 64..i * 64 + 4].try_into().unwrap());
+            offsets[i] = u64::from_le_bytes(offset_bytes[i * 64..i * 64 + 8].try_into().unwrap());
         }
     }
 
     /// Compute select and offset values for all blocks into provided vectors.
-    pub fn fill_select_and_offset(&self, hint_id: u32, num_blocks: u32, selects: &mut Vec<u32>, offsets: &mut Vec<u64>) {
+    pub fn fill_select_and_offset(
+        &self,
+        hint_id: u32,
+        num_blocks: u32,
+        selects: &mut Vec<u32>,
+        offsets: &mut Vec<u64>,
+    ) {
         selects.resize(num_blocks as usize, 0);
         offsets.resize(num_blocks as usize, 0);
-        
+
         let mut select_nonce = [0u8; 12];
         select_nonce[0..4].copy_from_slice(&0u32.to_le_bytes());
         select_nonce[4..8].copy_from_slice(&hint_id.to_le_bytes());
@@ -142,8 +148,8 @@ impl Prf {
         offset_cipher.apply_keystream(&mut offset_bytes);
 
         for i in 0..num_blocks as usize {
-            selects[i] = u32::from_le_bytes(select_bytes[i*64..i*64+4].try_into().unwrap());
-            offsets[i] = u64::from_le_bytes(offset_bytes[i*64..i*64+8].try_into().unwrap());
+            selects[i] = u32::from_le_bytes(select_bytes[i * 64..i * 64 + 4].try_into().unwrap());
+            offsets[i] = u64::from_le_bytes(offset_bytes[i * 64..i * 64 + 8].try_into().unwrap());
         }
     }
 
@@ -162,7 +168,7 @@ impl Prf {
 
         let mut selects = Vec::with_capacity(num_blocks as usize);
         let mut offsets = Vec::with_capacity(num_blocks as usize);
-        
+
         let mut buffer = [0u8; 64];
         for _ in 0..num_blocks {
             // Select
@@ -190,7 +196,7 @@ impl Prf {
 
         let mut cipher = ChaCha12::new((&self.key).into(), (&nonce).into());
         let mut result = Vec::with_capacity(num_blocks as usize);
-        
+
         // Each 64-byte ChaCha block corresponds to one increment of the counter.
         // We take the first 4 bytes of each block.
         let mut buffer = [0u8; 64];
@@ -235,14 +241,13 @@ mod tests {
     #[test]
     fn test_key_u32_roundtrip() {
         let key = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
         ];
         let prf = Prf::new(key);
         let key_u32 = prf.key_u32();
-        
+
         // Verify first word: 0x04030201 (little-endian)
         assert_eq!(key_u32[0], 0x04030201);
         assert_eq!(key_u32[7], 0x201f1e1d);

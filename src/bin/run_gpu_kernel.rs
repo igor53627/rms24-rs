@@ -53,7 +53,11 @@ fn main() -> io::Result<()> {
     };
 
     let num_entries = db_data.len() / args.entry_size;
-    println!("Database: {} ({:.2} GB)", args.db, db_data.len() as f64 / 1e9);
+    println!(
+        "Database: {} ({:.2} GB)",
+        args.db,
+        db_data.len() as f64 / 1e9
+    );
 
     println!("Loading subsets from {}...", args.subsets.display());
     let file = File::open(&args.subsets)?;
@@ -65,7 +69,10 @@ fn main() -> io::Result<()> {
     reader.read_exact(&mut buf4)?;
     let total_blocks_in_file = u32::from_le_bytes(buf4);
 
-    println!("Subset file: {} hints, {} total blocks", total_hints_in_file, total_blocks_in_file);
+    println!(
+        "Subset file: {} hints, {} total blocks",
+        total_hints_in_file, total_blocks_in_file
+    );
 
     fn read_u32_vec(reader: &mut BufReader<File>, count: usize) -> io::Result<Vec<u32>> {
         let mut data = vec![0u32; count];
@@ -88,7 +95,10 @@ fn main() -> io::Result<()> {
     let hint_end = (hint_start + args.hint_count as usize).min(total_hints_in_file as usize);
     let hint_count = hint_end - hint_start;
 
-    println!("Processing hints {}..{} ({} hints)", hint_start, hint_end, hint_count);
+    println!(
+        "Processing hints {}..{} ({} hints)",
+        hint_start, hint_end, hint_count
+    );
 
     let block_start = all_starts[hint_start] as usize;
     let block_end = if hint_end < total_hints_in_file as usize {
@@ -142,7 +152,10 @@ fn main() -> io::Result<()> {
         let elapsed = start.elapsed();
 
         println!("GPU time: {:.2}ms", elapsed.as_millis());
-        println!("Throughput: {:.0} hints/sec", hint_count as f64 / elapsed.as_secs_f64());
+        println!(
+            "Throughput: {:.0} hints/sec",
+            hint_count as f64 / elapsed.as_secs_f64()
+        );
         println!("Generated {} parities", output.len());
     }
 

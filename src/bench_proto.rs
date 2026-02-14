@@ -32,7 +32,10 @@ pub enum Query {
     /// RMS24 subset query.
     Rms24 { id: u64, subset: Vec<(u32, u32)> },
     /// KeywordPIR query with multiple RMS24 subsets.
-    KeywordPir { id: u64, subsets: Vec<Vec<(u32, u32)>> },
+    KeywordPir {
+        id: u64,
+        subsets: Vec<Vec<(u32, u32)>>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -118,7 +121,10 @@ mod tests {
     #[test]
     fn test_batch_request_roundtrip() {
         let batch = BatchRequest {
-            queries: vec![Query::Rms24 { id: 1, subset: vec![(0, 0)] }],
+            queries: vec![Query::Rms24 {
+                id: 1,
+                subset: vec![(0, 0)],
+            }],
         };
         let frame = ClientFrame::BatchRequest(batch);
         let bytes = bincode::serialize(&frame).unwrap();
@@ -129,7 +135,10 @@ mod tests {
     #[test]
     fn test_batch_reply_roundtrip() {
         let batch = BatchReply {
-            replies: vec![Reply::Rms24 { id: 2, parity: vec![9, 9] }],
+            replies: vec![Reply::Rms24 {
+                id: 2,
+                parity: vec![9, 9],
+            }],
         };
         let frame = ServerFrame::BatchReply(batch);
         let bytes = bincode::serialize(&frame).unwrap();

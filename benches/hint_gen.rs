@@ -52,5 +52,10 @@ fn bench_median_cutoff(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_cpu_hint_gen, bench_prf_operations, bench_median_cutoff);
+criterion_group!(
+    benches,
+    bench_cpu_hint_gen,
+    bench_prf_operations,
+    bench_median_cutoff
+);
 criterion_main!(benches);

@@ -88,7 +88,10 @@ fn handle_client(
         };
         let deserialize_start = Instant::now();
         let frame: ClientFrame = parse_client_frame(&msg)?;
-        record("deserialize", deserialize_start.elapsed().as_micros() as u64);
+        record(
+            "deserialize",
+            deserialize_start.elapsed().as_micros() as u64,
+        );
         let answer_start = Instant::now();
         let out = handle_client_frame(&server, frame, max_batch);
         record("answer", answer_start.elapsed().as_micros() as u64);
@@ -140,12 +143,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(&args.listen)?;
     for stream in listener.incoming() {
         let server = Arc::clone(&server);
-        let timing_enabled = timing_enabled;
-        let timing_every = timing_every;
-        let max_batch_queries = max_batch_queries;
         thread::spawn(move || {
             if let Ok(stream) = stream {
-                let _ = handle_client(stream, server, timing_enabled, timing_every, max_batch_queries);
+                let _ = handle_client(
+                    stream,
+                    server,
+                    timing_enabled,
+                    timing_every,
+                    max_batch_queries,
+                );
             }
         });
     }
@@ -261,7 +267,10 @@ mod tests {
         std::fs::write(&path, &db).unwrap();
 
         let server = build_server(path.to_str().unwrap(), entry_size, 2).unwrap();
-        let query = RmsQuery { id: 1, subset: vec![(0, 9)] };
+        let query = RmsQuery {
+            id: 1,
+            subset: vec![(0, 9)],
+        };
         let reply = server.answer(&query).unwrap();
         assert_eq!(reply.parity.len(), entry_size);
 

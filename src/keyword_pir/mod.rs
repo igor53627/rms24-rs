@@ -292,10 +292,8 @@ impl KeywordPirClient {
         let positions = self.positions_for_key(key);
         for pos in positions.iter().copied() {
             if let Some(slot) = table.slots.get(pos).and_then(|slot| slot.as_ref()) {
-                if slot.key_hash == key_hash {
-                    if self.entry_tag_matches(key, &slot.value)? {
-                        return Ok(slot.value);
-                    }
+                if slot.key_hash == key_hash && self.entry_tag_matches(key, &slot.value)? {
+                    return Ok(slot.value);
                 }
             }
         }
@@ -323,8 +321,9 @@ impl KeywordPirClient {
 
         let positions = self.positions_for_key(key);
         for pos in positions {
-            let (real_query, dummy_query, real_hint) =
-                online.build_network_queries(pos as u64).map_err(|e| e.to_string())?;
+            let (real_query, dummy_query, real_hint) = online
+                .build_network_queries(pos as u64)
+                .map_err(|e| e.to_string())?;
             let real_reply = sender(Query {
                 id: real_query.id,
                 subset: real_query.subset,
@@ -337,8 +336,9 @@ impl KeywordPirClient {
             let entry = online
                 .consume_network_reply(pos as u64, real_hint, real_reply.parity)
                 .map_err(|e| e.to_string())?;
-            let entry: [u8; ENTRY_SIZE] =
-                entry.try_into().map_err(|_| "entry size mismatch".to_string())?;
+            let entry: [u8; ENTRY_SIZE] = entry
+                .try_into()
+                .map_err(|_| "entry size mismatch".to_string())?;
 
             if self.entry_tag_matches(key, &entry)? {
                 return Ok(entry);
@@ -350,14 +350,14 @@ impl KeywordPirClient {
 
     fn query_collision(&self, key: &[u8], collision_table: &[u8]) -> Result<[u8; 40], String> {
         self.ensure_entry_size()?;
-        if collision_table.len() % COLLISION_ENTRY_SIZE != 0 {
+        if !collision_table.len().is_multiple_of(COLLISION_ENTRY_SIZE) {
             return Err("collision table size mismatch".into());
         }
         if self.params.cfg.bucket_size == 0 {
             return Err("bucket_size must be >0".into());
         }
         let slots = collision_table.len() / COLLISION_ENTRY_SIZE;
-        if slots % self.params.cfg.bucket_size != 0 {
+        if !slots.is_multiple_of(self.params.cfg.bucket_size) {
             return Err("collision table bucket alignment mismatch".into());
         }
         let num_buckets = slots / self.params.cfg.bucket_size;
@@ -531,7 +531,10 @@ mod tests {
         let entry = entry_with_tag_for_key(&key);
         let mut table = CuckooTable::new(cfg.clone());
         table.insert(&key, entry).unwrap();
-        let params = KeywordPirParams { cfg, entry_size: 40 };
+        let params = KeywordPirParams {
+            cfg,
+            entry_size: 40,
+        };
         let client = KeywordPirClient::new(params);
         let got = client.query_local(&key, &table).unwrap();
         assert_eq!(got, entry);
@@ -551,7 +554,10 @@ mod tests {
             key_hash: hash_key(&other_key),
             value: entry,
         });
-        let params = KeywordPirParams { cfg, entry_size: 40 };
+        let params = KeywordPirParams {
+            cfg,
+            entry_size: 40,
+        };
         let client = KeywordPirClient::new(params);
         assert!(client.query_local(&key, &table).is_err());
     }
@@ -564,7 +570,10 @@ mod tests {
         entry[24] ^= 0xFF;
         let mut table = CuckooTable::new(cfg.clone());
         table.insert(&key, entry).unwrap();
-        let params = KeywordPirParams { cfg, entry_size: 40 };
+        let params = KeywordPirParams {
+            cfg,
+            entry_size: 40,
+        };
         let client = KeywordPirClient::new(params);
         assert!(client.query_local(&key, &table).is_err());
     }
@@ -578,7 +587,10 @@ mod tests {
         let mut collision_table = CuckooTable::new(collision_cfg);
         collision_table.insert(&key, entry).unwrap();
 
-        let mut client = KeywordPirClient::new(KeywordPirParams { cfg: cfg.clone(), entry_size: 40 });
+        let mut client = KeywordPirClient::new(KeywordPirParams {
+            cfg: cfg.clone(),
+            entry_size: 40,
+        });
         let tag = tag_for_key(&key).unwrap();
         client.set_collision_tags(vec![tag]);
         client.set_collision_table(collision_table.to_collision_bytes());
@@ -592,7 +604,10 @@ mod tests {
     fn test_keywordpir_query_collision_empty_table_errors() {
         let cfg = CuckooConfig::new(8, 2, 2, 32, 1);
         let key = vec![0x11u8; 20];
-        let mut client = KeywordPirClient::new(KeywordPirParams { cfg: cfg.clone(), entry_size: 40 });
+        let mut client = KeywordPirClient::new(KeywordPirParams {
+            cfg: cfg.clone(),
+            entry_size: 40,
+        });
         let tag = tag_for_key(&key).unwrap();
         client.set_collision_tags(vec![tag]);
         client.set_collision_table(Vec::new());
