@@ -22,26 +22,25 @@ fi
 #   type must be one of the allowed list
 #   subject must start lowercase and the whole first line must be <= 72 chars
 TYPES="feat|fix|docs|test|chore|refactor|ci|build|perf|style|bench"
-PATTERN="^(${TYPES})(\([a-z0-9_-]+\))?: [a-z]"
+PATTERN="^(${TYPES})(\([a-z0-9_-]+\))?!?: [a-z]"
 
 if ! echo "$MSG" | grep -qE "$PATTERN"; then
   echo "ERROR: commit message does not follow Conventional Commits format." >&2
   echo "" >&2
-  echo "Expected: <type>(<optional-scope>): <lowercase subject>" >&2
+  echo "Expected: <type>(<optional-scope>)[!]: <lowercase subject>" >&2
   echo "Types:    feat, fix, docs, test, chore, refactor, ci, build, perf, style, bench" >&2
   echo "" >&2
   echo "Examples:" >&2
   echo "  feat: add user authentication" >&2
   echo "  fix(parser): handle empty input" >&2
+  echo "  feat!: drop support for legacy format" >&2
   echo "" >&2
   echo "Got: $MSG" >&2
   exit 1
 fi
 
 # Check subject line length (<= 72 characters)
-LEN=$(echo "$MSG" | wc -c | tr -d ' ')
-# wc -c counts the trailing newline, subtract 1
-LEN=$((LEN - 1))
+LEN=$(printf '%s' "$MSG" | wc -m | tr -d ' ')
 if [ "$LEN" -gt 72 ]; then
   echo "ERROR: commit subject line is $LEN characters (max 72)." >&2
   echo "Got: $MSG" >&2
