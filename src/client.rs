@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+/// Offline RMS24 client for hint generation.
 pub struct Client {
     pub params: Params,
     pub prf: Prf,
@@ -21,10 +22,12 @@ pub struct Client {
 }
 
 impl Client {
+    /// Create a client with a random PRF key.
     pub fn new(params: Params) -> Self {
         Self::with_prf(params, Prf::random())
     }
 
+    /// Create a client with a specific PRF key.
     pub fn with_prf(params: Params, prf: Prf) -> Self {
         let hints = HintState::new(
             params.num_reg_hints as usize,
@@ -311,6 +314,7 @@ impl Client {
     }
 }
 
+/// Online RMS24 client that issues queries and manages hint state.
 #[derive(Serialize, Deserialize)]
 pub struct OnlineClient {
     pub params: Params,
@@ -325,6 +329,7 @@ pub struct OnlineClient {
 }
 
 impl OnlineClient {
+    /// Create a new online client with the given PRF and RNG seed.
     pub fn new(params: Params, prf: Prf, seed: u64) -> Self {
         let hints = HintState::new(
             params.num_reg_hints as usize,
@@ -347,6 +352,7 @@ impl OnlineClient {
         }
     }
 
+    /// Generate hints from database bytes, resetting all hint state.
     pub fn generate_hints(&mut self, db: &[u8]) -> Result<(), ClientError> {
         let mut offline = Client::with_prf(self.params.clone(), self.prf.clone());
         offline.generate_hints(db);
@@ -358,12 +364,14 @@ impl OnlineClient {
         Ok(())
     }
 
+    /// Serialize the full client state to bytes (bincode).
     pub fn serialize_state(&self) -> Result<Vec<u8>, ClientError> {
         Self::bincode_options()
             .serialize(self)
             .map_err(|e| ClientError::SerializationError(e.to_string()))
     }
 
+    /// Deserialize client state from bytes, validating invariants.
     pub fn deserialize_state(bytes: &[u8]) -> Result<Self, ClientError> {
         let options = Self::bincode_options().with_limit(bytes.len() as u64);
         let mut client: Self = options
@@ -374,6 +382,7 @@ impl OnlineClient {
         Ok(client)
     }
 
+    /// Return and increment the monotonic query counter.
     pub fn next_query_id(&mut self) -> u64 {
         let id = self.next_query_id;
         self.next_query_id += 1;
@@ -420,6 +429,7 @@ impl OnlineClient {
         extra_block == target_block && extra_offset == target_offset
     }
 
+    /// Build a real and dummy query pair for the given entry index.
     pub fn build_network_queries(
         &mut self,
         index: u64,
@@ -468,6 +478,7 @@ impl OnlineClient {
         Ok((real_query, dummy_query, real_hint))
     }
 
+    /// Build an index mapping each entry to the hint IDs that cover it.
     pub fn build_coverage_index(&self) -> Vec<Vec<u32>> {
         let num_entries = self.params.num_entries as usize;
         let num_reg = self.params.num_reg_hints as usize;
@@ -486,6 +497,7 @@ impl OnlineClient {
         coverage
     }
 
+    /// Like [`Self::build_network_queries`] but uses a precomputed coverage index.
     pub fn build_network_queries_with_coverage(
         &mut self,
         index: u64,
@@ -539,6 +551,7 @@ impl OnlineClient {
         Ok((real_query, dummy_query, real_hint))
     }
 
+    /// Decode a server reply, recover the entry, and replenish the consumed hint.
     pub fn consume_network_reply(
         &mut self,
         index: u64,
@@ -564,6 +577,7 @@ impl OnlineClient {
         Ok(parity)
     }
 
+    /// Decode a reply without consuming the hint (read-only).
     pub fn decode_reply_static(
         &self,
         real_hint: usize,
@@ -623,6 +637,7 @@ impl OnlineClient {
         subset
     }
 
+    /// Execute a full query round-trip against a local server (for testing).
     pub fn query<D: crate::server::Db>(
         &mut self,
         server: &crate::server::Server<D>,
@@ -695,6 +710,7 @@ impl OnlineClient {
         Ok(result)
     }
 
+    /// Apply a database update to all affected hint parities.
     pub fn apply_update(&mut self, update: &crate::messages::Update) -> Result<(), ClientError> {
         if update.index >= self.params.num_entries {
             return Err(ClientError::InvalidIndex);

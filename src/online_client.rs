@@ -1,14 +1,17 @@
 use crate::online::{Mode, OnlineError, Query, Reply};
 
+/// Client-side query builder for the online protocol.
 pub struct ClientCore {
     mode: Mode,
 }
 
 impl ClientCore {
+    /// Create a client core for the given protocol mode.
     pub fn new(mode: Mode) -> Self {
         Self { mode }
     }
 
+    /// Build an RMS24 query, returning an error if the mode is wrong.
     pub fn build_rms24_query(&self, id: u64, subset: Vec<(u32, u32)>) -> Result<Query, OnlineError> {
         if self.mode != Mode::Rms24 {
             return Err(OnlineError::Protocol);
@@ -16,6 +19,7 @@ impl ClientCore {
         Ok(Query::Rms24 { id, subset })
     }
 
+    /// Build a keyword PIR query, returning an error if the mode is wrong.
     pub fn build_keywordpir_query(&self, id: u64, keyword: Vec<u8>) -> Result<Query, OnlineError> {
         if self.mode != Mode::KeywordPir {
             return Err(OnlineError::Protocol);
@@ -23,6 +27,7 @@ impl ClientCore {
         Ok(Query::KeywordPir { id, keyword })
     }
 
+    /// Extract the parity bytes from an RMS24 reply.
     pub fn expect_rms24_reply(&self, reply: Reply) -> Result<Vec<u8>, OnlineError> {
         match reply {
             Reply::Rms24 { parity, .. } => Ok(parity),

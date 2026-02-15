@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+/// Accumulates per-phase timing statistics for benchmark reporting.
 #[derive(Default)]
 pub struct TimingCounters {
     counts: HashMap<String, u64>,
@@ -8,6 +9,7 @@ pub struct TimingCounters {
 }
 
 impl TimingCounters {
+    /// Create counters that suggest logging every `log_every` samples.
     pub fn new(log_every: u64) -> Self {
         Self {
             counts: HashMap::new(),
@@ -16,11 +18,13 @@ impl TimingCounters {
         }
     }
 
+    /// Record one sample for the given phase.
     pub fn add(&mut self, phase: &str, micros: u64) {
         *self.counts.entry(phase.to_string()).or_insert(0) += 1;
         *self.totals_us.entry(phase.to_string()).or_insert(0) += micros;
     }
 
+    /// Format a one-line summary for the given phase.
     pub fn summary_line(&self, phase: &str) -> String {
         let count = *self.counts.get(phase).unwrap_or(&0);
         let total = *self.totals_us.get(phase).unwrap_or(&0);
@@ -31,6 +35,7 @@ impl TimingCounters {
         )
     }
 
+    /// Returns true when the sample count for `phase` is a multiple of `log_every`.
     pub fn should_log(&self, phase: &str) -> bool {
         let count = *self.counts.get(phase).unwrap_or(&0);
         self.log_every > 0 && count > 0 && count % self.log_every == 0

@@ -3,25 +3,31 @@ use crate::online::{Mode, OnlineError, Query, Reply, RunConfig};
 use crate::server::{Db, Server};
 use std::sync::Arc;
 
+/// Handler for keyword PIR queries on the server side.
 pub trait KeywordPirHandler: Send + Sync {
+    /// Answer a keyword PIR query, returning the payload bytes.
     fn answer(&self, keyword: &[u8]) -> Result<Vec<u8>, OnlineError>;
 }
 
+/// Server-side query dispatcher for both RMS24 and keyword PIR modes.
 pub struct ServerCore<D: Db> {
     server: Server<D>,
     keyword_handler: Option<Arc<dyn KeywordPirHandler>>,
 }
 
 impl<D: Db> ServerCore<D> {
+    /// Create a server core wrapping an RMS24 server.
     pub fn new(server: Server<D>) -> Self {
         Self { server, keyword_handler: None }
     }
 
+    /// Attach a keyword PIR handler.
     pub fn with_keyword_handler(mut self, handler: Arc<dyn KeywordPirHandler>) -> Self {
         self.keyword_handler = Some(handler);
         self
     }
 
+    /// Dispatch a query to the appropriate handler based on the run config mode.
     pub fn handle_query(&self, cfg: &RunConfig, query: Query) -> Result<Reply, OnlineError> {
         match (cfg.mode, query) {
             (Mode::Rms24, Query::Rms24 { id, subset }) => {

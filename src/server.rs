@@ -1,20 +1,27 @@
 use crate::hints::xor_bytes_inplace;
 use crate::messages::{Query, Reply, ServerError, Update};
 
+/// Trait for a database that the RMS24 server can query.
 pub trait Db {
+    /// Total number of entries in the database.
     fn num_entries(&self) -> u64;
+    /// Size of each entry in bytes.
     fn entry_size(&self) -> usize;
+    /// Read the entry at the given index.
     fn entry(&self, index: u64) -> Result<Vec<u8>, ServerError>;
+    /// Overwrite the entry at the given index.
     fn update(&mut self, index: u64, entry: &[u8]) -> Result<(), ServerError>;
 }
 
 #[derive(Debug)]
+/// In-memory database backed by a flat byte vector.
 pub struct InMemoryDb {
     entry_size: usize,
     entries: Vec<u8>,
 }
 
 impl InMemoryDb {
+    /// Create an in-memory database from raw bytes and a fixed entry size.
     pub fn new(entries: Vec<u8>, entry_size: usize) -> Result<Self, ServerError> {
         if entry_size == 0 || entries.len() % entry_size != 0 {
             return Err(ServerError::EntrySizeMismatch);
@@ -53,6 +60,7 @@ impl Db for InMemoryDb {
     }
 }
 
+/// RMS24 server that answers subset-parity queries against a database.
 pub struct Server<D: Db> {
     db: D,
     block_size: u64,
@@ -60,6 +68,7 @@ pub struct Server<D: Db> {
 }
 
 impl<D: Db> Server<D> {
+    /// Create a server for the given database and block size.
     pub fn new(db: D, block_size: u64) -> Result<Self, ServerError> {
         if block_size == 0 {
             return Err(ServerError::SubsetOutOfRange);
@@ -71,6 +80,7 @@ impl<D: Db> Server<D> {
         Ok(Self { db, block_size, max_subset_len })
     }
 
+    /// Compute the XOR parity of entries in the query's subset.
     pub fn answer(&self, query: &Query) -> Result<Reply, ServerError> {
         if query.subset.len() > self.max_subset_len {
             log::warn!("query id={} subset too large: {} > {}", query.id, query.subset.len(), self.max_subset_len);
@@ -95,6 +105,7 @@ impl<D: Db> Server<D> {
         Ok(Reply { id: query.id, parity })
     }
 
+    /// Apply a database update (write the new entry).
     pub fn apply_update(&mut self, update: &Update) -> Result<(), ServerError> {
         self.db.update(update.index, &update.new_entry)
     }

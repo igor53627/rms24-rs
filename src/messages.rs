@@ -1,17 +1,20 @@
 use thiserror::Error;
 
+/// RMS24 query containing a subset of (block, offset) pairs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Query {
     pub id: u64,
     pub subset: Vec<(u32, u32)>,
 }
 
+/// Server reply containing the XOR parity of the queried subset.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reply {
     pub id: u64,
     pub parity: Vec<u8>,
 }
 
+/// Database update with old and new entry values for a given index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Update {
     pub index: u64,
@@ -19,6 +22,7 @@ pub struct Update {
     pub new_entry: Vec<u8>,
 }
 
+/// Errors returned by the server when processing queries or updates.
 #[derive(Debug, Error)]
 pub enum ServerError {
     #[error("subset out of range")]
@@ -29,6 +33,7 @@ pub enum ServerError {
     DbError(String),
 }
 
+/// Errors encountered on the client side during queries or hint management.
 #[derive(Debug, Error)]
 pub enum ClientError {
     #[error("invalid index")]

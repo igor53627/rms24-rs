@@ -1,11 +1,13 @@
 use std::io::{self, Read, Write};
 
+/// Write a length-prefixed frame (big-endian u32 length + payload).
 pub fn write_frame<W: Write>(mut writer: W, payload: &[u8]) -> io::Result<()> {
     let len = u32::try_from(payload.len()).map_err(|_| io::ErrorKind::InvalidInput)?;
     writer.write_all(&len.to_be_bytes())?;
     writer.write_all(payload)
 }
 
+/// Read a length-prefixed frame.
 pub fn read_frame<R: Read>(mut reader: R) -> io::Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     reader.read_exact(&mut len_buf)?;
