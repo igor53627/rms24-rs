@@ -61,7 +61,11 @@ mod tests {
 
     #[test]
     fn test_run_config_roundtrip() {
-        let cfg = RunConfig { mode: Mode::Rms24, lambda: 80, entry_size: 40 };
+        let cfg = RunConfig {
+            mode: Mode::Rms24,
+            lambda: 80,
+            entry_size: 40,
+        };
         let bytes = bincode::serialize(&cfg).unwrap();
         let decoded: RunConfig = bincode::deserialize(&bytes).unwrap();
         assert_eq!(cfg, decoded);
@@ -69,7 +73,10 @@ mod tests {
 
     #[test]
     fn test_query_roundtrip_rms24() {
-        let q = Query::Rms24 { id: 7, subset: vec![(1, 2), (3, 4)] };
+        let q = Query::Rms24 {
+            id: 7,
+            subset: vec![(1, 2), (3, 4)],
+        };
         let bytes = bincode::serialize(&q).unwrap();
         let decoded: Query = bincode::deserialize(&bytes).unwrap();
         assert_eq!(q, decoded);
@@ -77,7 +84,10 @@ mod tests {
 
     #[test]
     fn test_query_roundtrip_keywordpir() {
-        let q = Query::KeywordPir { id: 9, keyword: b"alice".to_vec() };
+        let q = Query::KeywordPir {
+            id: 9,
+            keyword: b"alice".to_vec(),
+        };
         let bytes = bincode::serialize(&q).unwrap();
         let decoded: Query = bincode::deserialize(&bytes).unwrap();
         assert_eq!(q, decoded);
@@ -85,7 +95,10 @@ mod tests {
 
     #[test]
     fn test_reply_roundtrip_error() {
-        let r = Reply::Error { code: ErrorCode::Protocol, message: "bad mode".into() };
+        let r = Reply::Error {
+            code: ErrorCode::Protocol,
+            message: "bad mode".into(),
+        };
         let bytes = bincode::serialize(&r).unwrap();
         let decoded: Reply = bincode::deserialize(&bytes).unwrap();
         assert_eq!(r, decoded);

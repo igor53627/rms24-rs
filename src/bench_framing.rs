@@ -11,7 +11,11 @@ pub fn write_frame<W: Write>(mut w: W, payload: &[u8]) -> io::Result<()> {
     if payload.len() > MAX_FRAME_SIZE {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("payload size {} exceeds maximum {}", payload.len(), MAX_FRAME_SIZE),
+            format!(
+                "payload size {} exceeds maximum {}",
+                payload.len(),
+                MAX_FRAME_SIZE
+            ),
         ));
     }
     let len = payload.len() as u32;

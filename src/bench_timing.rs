@@ -38,6 +38,6 @@ impl TimingCounters {
     /// Returns true when the sample count for `phase` is a multiple of `log_every`.
     pub fn should_log(&self, phase: &str) -> bool {
         let count = *self.counts.get(phase).unwrap_or(&0);
-        self.log_every > 0 && count > 0 && count % self.log_every == 0
+        self.log_every > 0 && count > 0 && count.is_multiple_of(self.log_every)
     }
 }

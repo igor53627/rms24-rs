@@ -54,8 +54,14 @@ mod tests {
 
     #[test]
     fn test_query_reply_round_trip_fields() {
-        let q = Query { id: 7, subset: vec![(1, 2), (3, 4)] };
-        let r = Reply { id: 7, parity: vec![1, 2, 3] };
+        let q = Query {
+            id: 7,
+            subset: vec![(1, 2), (3, 4)],
+        };
+        let r = Reply {
+            id: 7,
+            parity: vec![1, 2, 3],
+        };
         assert_eq!(q.id, 7);
         assert_eq!(r.id, 7);
         assert_eq!(q.subset.len(), 2);

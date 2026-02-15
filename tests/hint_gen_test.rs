@@ -50,15 +50,22 @@ fn test_hint_coverage() {
 
     // Most hints should be valid (cutoff > 0)
     let num_reg = params.num_reg_hints as usize;
-    let valid_count = client.hints.cutoffs[..num_reg].iter().filter(|&&c| c > 0).count();
-    assert!(valid_count >= 75, "Most regular hints should be valid, got {}", valid_count);
+    let valid_count = client.hints.cutoffs[..num_reg]
+        .iter()
+        .filter(|&&c| c > 0)
+        .count();
+    assert!(
+        valid_count >= 75,
+        "Most regular hints should be valid, got {}",
+        valid_count
+    );
 }
 
 #[test]
 fn test_backup_hints() {
     let params = Params::new(256, 40, 4);
     let mut client = Client::with_prf(params.clone(), Prf::new([0u8; 32]));
-    
+
     // Database with pattern
     let mut db = vec![0u8; 256 * 40];
     for i in 0..256 {
@@ -72,31 +79,36 @@ fn test_backup_hints() {
     // Check backup hints have dual parities
     let num_backup = params.num_backup_hints as usize;
     assert_eq!(client.hints.backup_parities_high.len(), num_backup);
-    
+
     // Some backup hints should have non-zero high parities
-    let nonzero_high = client.hints.backup_parities_high
+    let nonzero_high = client
+        .hints
+        .backup_parities_high
         .iter()
         .filter(|p| p.iter().any(|&b| b != 0))
         .count();
-    assert!(nonzero_high > 0, "Backup hints should have non-zero high parities");
+    assert!(
+        nonzero_high > 0,
+        "Backup hints should have non-zero high parities"
+    );
 }
 
 #[test]
 fn test_deterministic_with_same_prf() {
     let params = Params::new(100, 40, 4);
     let prf_key = [0u8; 32];
-    
+
     let mut client1 = Client::with_prf(params.clone(), Prf::new(prf_key));
     let mut client2 = Client::with_prf(params, Prf::new(prf_key));
-    
+
     let db = vec![0x42u8; 100 * 40];
-    
+
     client1.generate_hints(&db);
     client2.generate_hints(&db);
-    
+
     // Cutoffs should be identical
     assert_eq!(client1.hints.cutoffs, client2.hints.cutoffs);
-    
+
     // Parities are deterministic with the same PRF key.
 }
 
@@ -128,10 +140,10 @@ fn test_large_database() {
     let num_entries = 10_000u64;
     let params = Params::new(num_entries, 40, 4);
     let mut client = Client::with_prf(params, Prf::new([0u8; 32]));
-    
+
     let db = vec![0u8; num_entries as usize * 40];
     client.generate_hints(&db);
-    
+
     let valid_hints = client.hints.cutoffs.iter().filter(|&&c| c > 0).count();
     assert!(valid_hints > 0);
 }

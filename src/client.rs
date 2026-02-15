@@ -2,9 +2,9 @@
 
 use crate::hints::{find_median_cutoff, xor_bytes_inplace, HintState, HintSubset};
 use crate::messages::ClientError;
-use crate::updates::replenish_from_backup;
 use crate::params::Params;
 use crate::prf::Prf;
+use crate::updates::replenish_from_backup;
 use bincode::Options;
 use rand::{Rng, SeedableRng};
 use rand_chacha::{ChaCha20Rng, ChaCha8Rng};
@@ -43,7 +43,10 @@ impl Client {
     /// Does NOT stream database or compute parities.
     /// Uses rayon for parallel processing across hints.
     pub fn generate_subsets(&self) -> Vec<HintSubset> {
-        self.generate_subsets_range(0, (self.params.num_reg_hints + self.params.num_backup_hints) as usize)
+        self.generate_subsets_range(
+            0,
+            (self.params.num_reg_hints + self.params.num_backup_hints) as usize,
+        )
     }
 
     /// Generate precomputed subsets for a specific hint range.
@@ -53,25 +56,27 @@ impl Client {
         let p = &self.params;
         let num_reg = p.num_reg_hints as usize;
         let num_blocks = p.num_blocks as u32;
-        let block_size = p.block_size as u64;
+        let block_size = p.block_size;
 
         (hint_start..hint_end)
             .into_par_iter()
             .map_init(
-                || (
-                    Vec::with_capacity(num_blocks as usize), 
-                    Vec::with_capacity(num_blocks as usize),
-                    Vec::with_capacity(num_blocks as usize * 64),
-                    Vec::with_capacity(num_blocks as usize * 64)
-                ),
+                || {
+                    (
+                        Vec::with_capacity(num_blocks as usize),
+                        Vec::with_capacity(num_blocks as usize),
+                        Vec::with_capacity(num_blocks as usize * 64),
+                        Vec::with_capacity(num_blocks as usize * 64),
+                    )
+                },
                 |(select_values, offset_values, select_bytes, offset_bytes), hint_idx| {
                     self.prf.fill_select_and_offset_reused(
-                        hint_idx as u32, 
-                        num_blocks, 
-                        select_values, 
+                        hint_idx as u32,
+                        num_blocks,
+                        select_values,
                         offset_values,
                         select_bytes,
-                        offset_bytes
+                        offset_bytes,
                     );
                     let cutoff = find_median_cutoff(select_values);
 
@@ -101,7 +106,7 @@ impl Client {
                     }
 
                     subset
-                }
+                },
             )
             .collect()
     }
@@ -114,7 +119,7 @@ impl Client {
         let num_total = (p.num_reg_hints + p.num_backup_hints) as usize;
         let num_reg = p.num_reg_hints as usize;
         let num_blocks = p.num_blocks as u32;
-        let block_size = p.block_size as u64;
+        let block_size = p.block_size;
         let entry_size = p.entry_size;
         let total_hints = num_total as u64;
 
@@ -128,18 +133,20 @@ impl Client {
         }
 
         let phase1_start = Instant::now();
-        let log_every_hint = std::cmp::max(1, (total_hints + 99) / 100);
+        let log_every_hint = std::cmp::max(1, total_hints.div_ceil(100));
         let hints_done = AtomicUsize::new(0);
 
         let phase1_results: Vec<Phase1Result> = (0..num_total)
             .into_par_iter()
             .map_init(
-                || (
-                    Vec::with_capacity(num_blocks as usize),
-                    Vec::with_capacity(num_blocks as usize),
-                    Vec::with_capacity(num_blocks as usize * 64),
-                    Vec::with_capacity(num_blocks as usize * 64),
-                ),
+                || {
+                    (
+                        Vec::with_capacity(num_blocks as usize),
+                        Vec::with_capacity(num_blocks as usize),
+                        Vec::with_capacity(num_blocks as usize * 64),
+                        Vec::with_capacity(num_blocks as usize * 64),
+                    )
+                },
                 |(select_values, offset_values, select_bytes, offset_bytes), hint_idx| {
                     self.prf.fill_select_and_offset_reused(
                         hint_idx as u32,
@@ -170,7 +177,7 @@ impl Client {
                     }
 
                     let done = hints_done.fetch_add(1, Ordering::Relaxed) + 1;
-                    if done as u64 % log_every_hint == 0 || done as u64 == total_hints {
+                    if (done as u64).is_multiple_of(log_every_hint) || done as u64 == total_hints {
                         let elapsed = phase1_start.elapsed().as_secs_f64();
                         let rate = done as f64 / elapsed.max(1e-9);
                         let eta = if rate > 0.0 {
@@ -212,12 +219,14 @@ impl Client {
         let parity_results: Vec<ParityResult> = (0..num_total)
             .into_par_iter()
             .map_init(
-                || (
-                    Vec::with_capacity(num_blocks as usize),
-                    Vec::with_capacity(num_blocks as usize),
-                    Vec::with_capacity(num_blocks as usize * 64),
-                    Vec::with_capacity(num_blocks as usize * 64),
-                ),
+                || {
+                    (
+                        Vec::with_capacity(num_blocks as usize),
+                        Vec::with_capacity(num_blocks as usize),
+                        Vec::with_capacity(num_blocks as usize * 64),
+                        Vec::with_capacity(num_blocks as usize * 64),
+                    )
+                },
                 |(select_values, offset_values, select_bytes, offset_bytes), hint_idx| {
                     let cutoff = self.hints.cutoffs[hint_idx];
                     let extra_block = self.hints.extra_blocks[hint_idx];
@@ -258,12 +267,10 @@ impl Client {
                                 if select_val < cutoff {
                                     xor_bytes_inplace(&mut parity, entry);
                                 }
-                            } else {
-                                if select_val < cutoff {
-                                    xor_bytes_inplace(&mut parity, entry);
-                                } else if let Some(ref mut backup) = backup_high {
-                                    xor_bytes_inplace(backup, entry);
-                                }
+                            } else if select_val < cutoff {
+                                xor_bytes_inplace(&mut parity, entry);
+                            } else if let Some(ref mut backup) = backup_high {
+                                xor_bytes_inplace(backup, entry);
                             }
                         }
 
@@ -280,7 +287,7 @@ impl Client {
                     }
 
                     let done = phase2_done.fetch_add(1, Ordering::Relaxed) + 1;
-                    if done as u64 % log_every_hint == 0 || done as u64 == total_hints {
+                    if (done as u64).is_multiple_of(log_every_hint) || done as u64 == total_hints {
                         let elapsed = phase2_start.elapsed().as_secs_f64();
                         let rate = done as f64 / elapsed.max(1e-9);
                         let eta = if rate > 0.0 {
@@ -295,7 +302,10 @@ impl Client {
                         );
                     }
 
-                    ParityResult { parity, backup_high }
+                    ParityResult {
+                        parity,
+                        backup_high,
+                    }
                 },
             )
             .collect();
@@ -420,7 +430,11 @@ impl OnlineClient {
         let select = self.prf.select(prf_id, target_block);
         let offset = (self.prf.offset(prf_id, target_block) % self.params.block_size) as u32;
         let flipped = self.hints.flips[hint_id];
-        let is_selected = if flipped { select >= cutoff } else { select < cutoff };
+        let is_selected = if flipped {
+            select >= cutoff
+        } else {
+            select < cutoff
+        };
         if is_selected && offset == target_offset {
             return true;
         }
@@ -512,8 +526,7 @@ impl OnlineClient {
         let target_block = self.params.block_of(index) as u32;
         let target_offset = self.params.offset_in_block(index) as u32;
 
-        let available_set: HashSet<usize> =
-            self.available_hints.iter().copied().collect();
+        let available_set: HashSet<usize> = self.available_hints.iter().copied().collect();
         let mut candidates: Vec<usize> = coverage[index as usize]
             .iter()
             .copied()
@@ -568,7 +581,11 @@ impl OnlineClient {
         }
         xor_bytes_inplace(&mut parity, hint_parity);
 
-        if let Some(pos) = self.available_hints.iter().position(|&hint| hint == real_hint) {
+        if let Some(pos) = self
+            .available_hints
+            .iter()
+            .position(|&hint| hint == real_hint)
+        {
             self.available_hints.swap_remove(pos);
         }
         self.replenish_hint(real_hint, index, &parity)?;
@@ -622,7 +639,11 @@ impl OnlineClient {
         for block in 0..num_blocks {
             let select = self.prf.select(prf_id, block);
             let offset = (self.prf.offset(prf_id, block) % block_size) as u32;
-            let is_selected = if flipped { select >= cutoff } else { select < cutoff };
+            let is_selected = if flipped {
+                select >= cutoff
+            } else {
+                select < cutoff
+            };
             if is_selected {
                 push_if_in_range(block, offset);
             }
@@ -701,7 +722,11 @@ impl OnlineClient {
         }
         xor_bytes_inplace(&mut result, hint_parity);
 
-        if let Some(pos) = self.available_hints.iter().position(|&hint| hint == real_hint) {
+        if let Some(pos) = self
+            .available_hints
+            .iter()
+            .position(|&hint| hint == real_hint)
+        {
             self.available_hints.swap_remove(pos);
         }
         self.replenish_hint(real_hint, index, &result)?;
@@ -734,13 +759,16 @@ impl OnlineClient {
             let prf_id = self.hint_prf_ids[hint_id];
 
             let select = self.prf.select(prf_id, block);
-            let picked_offset =
-                (self.prf.offset(prf_id, block) % self.params.block_size) as u32;
+            let picked_offset = (self.prf.offset(prf_id, block) % self.params.block_size) as u32;
             let matches_selected = picked_offset == offset;
 
             if hint_id < num_reg {
                 let flipped = self.hints.flips[hint_id];
-                let is_selected = if flipped { select >= cutoff } else { select < cutoff };
+                let is_selected = if flipped {
+                    select >= cutoff
+                } else {
+                    select < cutoff
+                };
                 let extra_block = self.hints.extra_blocks[hint_id];
                 let extra_offset = self.hints.extra_offsets[hint_id];
                 let matches_extra = extra_block == block && extra_offset == offset;
@@ -878,11 +906,7 @@ impl OnlineClient {
                 "backup parity length mismatch".to_string(),
             ));
         }
-        if self
-            .hint_prf_ids
-            .iter()
-            .any(|&id| id as usize >= total)
-        {
+        if self.hint_prf_ids.iter().any(|&id| id as usize >= total) {
             return Err(ClientError::SerializationError(
                 "hint prf id out of range".to_string(),
             ));
@@ -904,7 +928,6 @@ impl OnlineClient {
 
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -931,7 +954,11 @@ mod tests {
         }
         client.generate_hints(&db);
         // At least some parities should be non-zero
-        let any_nonzero = client.hints.parities.iter().any(|p| p.iter().any(|&b| b != 0));
+        let any_nonzero = client
+            .hints
+            .parities
+            .iter()
+            .any(|p| p.iter().any(|&b| b != 0));
         assert!(any_nonzero);
     }
 
@@ -952,7 +979,7 @@ mod tests {
         let mut client = Client::with_prf(params.clone(), Prf::new([0u8; 32]));
         let db = vec![0xFFu8; 100 * 40];
         client.generate_hints(&db);
-        
+
         // Most hints should be valid (cutoff > 0)
         let valid_count = client.hints.cutoffs.iter().filter(|&&c| c > 0).count();
         assert!(valid_count > 0, "Should have valid hints");
@@ -1075,7 +1102,11 @@ mod tests {
         let mut client_uncached = OnlineClient::new(params.clone(), prf.clone(), 123);
         let mut client_cached = OnlineClient::new(params.clone(), prf, 123);
 
-        let db = vec![7u8; (client_uncached.params.num_entries as usize) * client_uncached.params.entry_size];
+        let db = vec![
+            7u8;
+            (client_uncached.params.num_entries as usize)
+                * client_uncached.params.entry_size
+        ];
         client_uncached.generate_hints(&db).unwrap();
         client_cached.generate_hints(&db).unwrap();
 
@@ -1222,8 +1253,9 @@ mod tests {
             .position(|hints| !hints.is_empty())
             .map(|idx| idx as u64)
             .expect("expected at least one covered index");
-        let (real_query, dummy_query, real_hint) =
-            client.build_network_queries_with_coverage(index, &coverage).unwrap();
+        let (real_query, dummy_query, real_hint) = client
+            .build_network_queries_with_coverage(index, &coverage)
+            .unwrap();
 
         assert!(coverage[index as usize].contains(&(real_hint as u32)));
         assert_eq!(real_query.id, dummy_query.id);
@@ -1271,15 +1303,20 @@ mod tests {
         let (index, covering) = target.expect("expected index with >=2 covering hints");
 
         let removed_hint = covering[0];
-        if let Some(pos) = client.available_hints.iter().position(|&h| h == removed_hint) {
+        if let Some(pos) = client
+            .available_hints
+            .iter()
+            .position(|&h| h == removed_hint)
+        {
             client.available_hints.swap_remove(pos);
         }
 
         let mut coverage_override = coverage.clone();
         coverage_override[index as usize] = vec![removed_hint as u32];
 
-        let (_real_query, _dummy_query, real_hint) =
-            client.build_network_queries_with_coverage(index, &coverage_override).unwrap();
+        let (_real_query, _dummy_query, real_hint) = client
+            .build_network_queries_with_coverage(index, &coverage_override)
+            .unwrap();
 
         assert_ne!(real_hint, removed_hint);
         assert!(client.available_hints.contains(&real_hint));

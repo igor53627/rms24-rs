@@ -23,10 +23,13 @@ pub struct InMemoryDb {
 impl InMemoryDb {
     /// Create an in-memory database from raw bytes and a fixed entry size.
     pub fn new(entries: Vec<u8>, entry_size: usize) -> Result<Self, ServerError> {
-        if entry_size == 0 || entries.len() % entry_size != 0 {
+        if entry_size == 0 || !entries.len().is_multiple_of(entry_size) {
             return Err(ServerError::EntrySizeMismatch);
         }
-        Ok(Self { entry_size, entries })
+        Ok(Self {
+            entry_size,
+            entries,
+        })
     }
 }
 
@@ -77,7 +80,11 @@ impl<D: Db> Server<D> {
         let num_blocks = num_entries.saturating_add(block_size - 1) / block_size;
         let max_subset_len = num_blocks.saturating_add(1);
         let max_subset_len = usize::try_from(max_subset_len).unwrap_or(usize::MAX);
-        Ok(Self { db, block_size, max_subset_len })
+        Ok(Self {
+            db,
+            block_size,
+            max_subset_len,
+        })
     }
 
     /// Compute the XOR parity of entries in the query's subset.
@@ -102,7 +109,10 @@ impl<D: Db> Server<D> {
             }
             xor_bytes_inplace(&mut parity, &entry);
         }
-        Ok(Reply { id: query.id, parity })
+        Ok(Reply {
+            id: query.id,
+            parity,
+        })
     }
 
     /// Apply a database update (write the new entry).
@@ -122,7 +132,10 @@ mod tests {
         let block_size = 2;
         let db = InMemoryDb::new(vec![1, 2, 3, 4, 5, 6, 7, 8], entry_size).unwrap();
         let server = Server::new(db, block_size).unwrap();
-        let query = Query { id: 1, subset: vec![(0, 0), (0, 1)] };
+        let query = Query {
+            id: 1,
+            subset: vec![(0, 0), (0, 1)],
+        };
         let reply = server.answer(&query).unwrap();
         // parity of entry0 ^ entry1
         assert_eq!(reply.parity, vec![1 ^ 5, 2 ^ 6, 3 ^ 7, 4 ^ 8]);
@@ -142,7 +155,10 @@ mod tests {
         let block_size = 1;
         let db = InMemoryDb::new(vec![1, 2, 3, 4], entry_size).unwrap();
         let server = Server::new(db, block_size).unwrap();
-        let query = Query { id: 1, subset: vec![(1, 0)] };
+        let query = Query {
+            id: 1,
+            subset: vec![(1, 0)],
+        };
         let err = server.answer(&query).unwrap_err();
         assert!(matches!(err, ServerError::SubsetOutOfRange));
     }
@@ -163,7 +179,10 @@ mod tests {
         let block_size = 2;
         let db = InMemoryDb::new(vec![1, 2, 3, 4], entry_size).unwrap();
         let server = Server::new(db, block_size).unwrap();
-        let query = Query { id: 1, subset: vec![(0, 0), (0, 1), (1, 0), (1, 1)] };
+        let query = Query {
+            id: 1,
+            subset: vec![(0, 0), (0, 1), (1, 0), (1, 1)],
+        };
         let err = server.answer(&query).unwrap_err();
         assert!(matches!(err, ServerError::SubsetOutOfRange));
     }
@@ -174,7 +193,10 @@ mod tests {
         let block_size = 2;
         let db = InMemoryDb::new(vec![1, 2, 3, 4], entry_size).unwrap();
         let server = Server::new(db, block_size).unwrap();
-        let query = Query { id: 1, subset: vec![(0, 2)] };
+        let query = Query {
+            id: 1,
+            subset: vec![(0, 2)],
+        };
         let err = server.answer(&query).unwrap_err();
         assert!(matches!(err, ServerError::SubsetOutOfRange));
     }
@@ -185,7 +207,10 @@ mod tests {
         let block_size = u64::MAX;
         let db = InMemoryDb::new(vec![1], entry_size).unwrap();
         let server = Server::new(db, block_size).unwrap();
-        let query = Query { id: 1, subset: vec![(2, 0)] };
+        let query = Query {
+            id: 1,
+            subset: vec![(2, 0)],
+        };
         let err = server.answer(&query).unwrap_err();
         assert!(matches!(err, ServerError::SubsetOutOfRange));
     }
