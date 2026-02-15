@@ -1,4 +1,5 @@
 use clap::Parser;
+use log::info;
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use rms24::{params::Params, hints::{xor_bytes_inplace, find_median_cutoff}, prf::Prf};
@@ -26,26 +27,27 @@ struct Args {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let args = Args::parse();
 
     if let Some(t) = args.threads {
         rayon::ThreadPoolBuilder::new().num_threads(t).build_global()?;
     }
 
-    println!("Opening database: {}", args.db);
+    info!("Opening database: {}", args.db);
     let file = File::open(&args.db)?;
     let mmap = unsafe { MmapOptions::new().map(&file)? };
     let db_size = mmap.len();
     let num_entries = db_size / args.entry_size;
 
-    println!("Database size: {:.2} GB", db_size as f64 / 1e9);
-    println!("Entries: {}", num_entries);
+    info!("Database size: {:.2} GB", db_size as f64 / 1e9);
+    info!("Entries: {}", num_entries);
     
     let params = Params::new(num_entries as u64, args.entry_size, args.lambda);
-    println!("Params: {:?}", params);
+    info!("Params: {:?}", params);
 
     let num_total_hints = (params.num_reg_hints + params.num_backup_hints) as usize;
-    println!("Total Hints: {}", num_total_hints);
+    info!("Total Hints: {}", num_total_hints);
 
     let prf = Prf::random();
     let entry_size = args.entry_size;
@@ -53,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let block_size = params.block_size;
     let num_reg = params.num_reg_hints as usize;
 
-    println!("Starting Streamed Hint Generation (Hint-Parallel)...");
+    info!("Starting Streamed Hint Generation (Hint-Parallel)...");
     let start = Instant::now();
 
     let hints_done = AtomicUsize::new(0);
@@ -151,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if (done + 1) % 1000 == 0 {
                     let elapsed = start.elapsed().as_secs_f64();
                     let rate = (done + 1) as f64 / elapsed;
-                    println!("Processed {}/{} hints ({:.1}%, {:.1} hints/s, est. remaining: {:.1}m)", 
+                    info!("Processed {}/{} hints ({:.1}%, {:.1} hints/s, est. remaining: {:.1}m)",
                         done + 1, num_total_hints, (done + 1) as f64 * 100.0 / num_total_hints as f64,
                         rate, (num_total_hints - (done + 1)) as f64 / rate / 60.0);
                 }
@@ -159,13 +161,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ).for_each(|_| {});
 
     let duration = start.elapsed();
-    println!("Total generation complete in {:.2}s", duration.as_secs_f64());
+    info!("Total generation complete in {:.2}s", duration.as_secs_f64());
     
     let nonzero = parities.chunks(entry_size).filter(|p| p.iter().any(|&b| b != 0)).count();
-    println!("Non-zero parities: {} / {}", nonzero, num_total_hints);
+    info!("Non-zero parities: {} / {}", nonzero, num_total_hints);
     
     let effective_gb = (db_size as f64 / 1e9) * (args.lambda as f64 * 0.5);
-    println!("Effective Throughput: {:.2} GB/s", effective_gb / duration.as_secs_f64());
+    info!("Effective Throughput: {:.2} GB/s", effective_gb / duration.as_secs_f64());
 
     Ok(())
 }

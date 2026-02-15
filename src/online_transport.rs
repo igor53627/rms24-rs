@@ -24,13 +24,25 @@ impl<RW> FramedIo<RW> {
 
 impl<RW: Read + Write> Transport for FramedIo<RW> {
     fn send<T: Serialize>(&mut self, value: &T) -> Result<(), OnlineError> {
-        let bytes = bincode::serialize(value).map_err(|_| OnlineError::Encode)?;
-        write_frame(&mut self.inner, &bytes).map_err(|_| OnlineError::Encode)
+        let bytes = bincode::serialize(value).map_err(|e| {
+            log::debug!("transport serialize error: {}", e);
+            OnlineError::Encode
+        })?;
+        write_frame(&mut self.inner, &bytes).map_err(|e| {
+            log::debug!("transport write error: {}", e);
+            OnlineError::Encode
+        })
     }
 
     fn recv<T: DeserializeOwned>(&mut self) -> Result<T, OnlineError> {
-        let bytes = read_frame(&mut self.inner).map_err(|_| OnlineError::Decode)?;
-        bincode::deserialize(&bytes).map_err(|_| OnlineError::Decode)
+        let bytes = read_frame(&mut self.inner).map_err(|e| {
+            log::debug!("transport read error: {}", e);
+            OnlineError::Decode
+        })?;
+        bincode::deserialize(&bytes).map_err(|e| {
+            log::debug!("transport deserialize error: {}", e);
+            OnlineError::Decode
+        })
     }
 }
 

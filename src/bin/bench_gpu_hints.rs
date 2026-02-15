@@ -5,6 +5,7 @@
 //!     --db data/database.bin --lambda 80 --iterations 5
 
 use clap::{Parser, ValueEnum};
+use log::{error, info};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -53,28 +54,28 @@ struct Args {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let args = Args::parse();
 
-    println!("RMS24 GPU Hint Generation Benchmark");
-    println!("====================================");
+    info!("RMS24 GPU Hint Generation Benchmark");
 
     let kernel_name = match args.kernel {
         Kernel::Old => "old",
         Kernel::Warp => "warp",
     };
-    println!("Kernel: {}", kernel_name);
+    info!("Kernel: {}", kernel_name);
 
     let db_data = if args.db.starts_with("synthetic:") {
         let size_mb: usize = args.db.strip_prefix("synthetic:").unwrap().parse()?;
         let size_bytes = size_mb * 1024 * 1024;
-        println!("Generating synthetic database: {} MB", size_mb);
+        info!("Generating synthetic database: {} MB", size_mb);
         io::stdout().flush().unwrap();
         vec![0xABu8; size_bytes]
     } else {
         std::fs::read(&args.db)?
     };
     let num_entries = db_data.len() / args.entry_size;
-    println!(
+    info!(
         "Database: {} ({:.2} GB, {} entries)",
         args.db,
         db_data.len() as f64 / 1e9,
@@ -82,10 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let params = rms24::Params::new(num_entries as u64, args.entry_size, args.lambda);
-    println!("Block size: {}", params.block_size);
-    println!("Num blocks: {}", params.num_blocks);
-    println!("Regular hints: {}", params.num_reg_hints);
-    println!("Backup hints: {}", params.num_backup_hints);
+    info!("Block size: {}", params.block_size);
+    info!("Num blocks: {}", params.num_blocks);
+    info!("Regular hints: {}", params.num_reg_hints);
+    info!("Backup hints: {}", params.num_backup_hints);
 
     let total_hints = if let Some(max) = args.max_hints {
         max.min(params.total_hints() as u32)
@@ -95,11 +96,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hint_start = args.hint_start;
     let hint_end = (hint_start + total_hints).min(params.total_hints() as u32);
     let hint_count = hint_end - hint_start;
-    println!(
+    info!(
         "Generating: {} hints (range {}..{})",
         hint_count, hint_start, hint_end
     );
-    println!();
 
     #[cfg(feature = "cuda")]
     {
@@ -118,8 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _padding: 0,
         };
 
-        println!("Running Phase 1 (CPU)...");
-        io::stdout().flush().unwrap();
+        info!("Running Phase 1 (CPU)...");
         let phase1_start = Instant::now();
 
         enum Phase1Data {
@@ -174,15 +173,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let phase1_time = phase1_start.elapsed();
-        println!("Phase 1 complete: {:.2}s", phase1_time.as_secs_f64());
-        io::stdout().flush().unwrap();
+        info!("Phase 1 complete: {:.2}s", phase1_time.as_secs_f64());
 
-        println!("\nInitializing GPU...");
-        io::stdout().flush().unwrap();
+        info!("Initializing GPU...");
         let generator = GpuHintGenerator::new(0)?;
 
-        println!("\nWarming up ({} iterations)...", args.warmup);
-        io::stdout().flush().unwrap();
+        info!("Warming up ({} iterations)...", args.warmup);
         for _ in 0..args.warmup {
             match &phase1 {
                 Phase1Data::Old { prf_key, hint_meta } => {
@@ -194,7 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        println!("\nBenchmarking ({} iterations)...", args.iterations);
+        info!("Benchmarking ({} iterations)...", args.iterations);
         let mut times = Vec::with_capacity(args.iterations as usize);
 
         for i in 0..args.iterations {
@@ -209,28 +205,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let elapsed = start.elapsed();
             times.push(elapsed.as_millis() as f64);
-            println!("Iteration {}: {:.2} ms", i + 1, elapsed.as_millis());
+            info!("Iteration {}: {:.2} ms", i + 1, elapsed.as_millis());
         }
 
         let avg = times.iter().sum::<f64>() / times.len() as f64;
         let min = times.iter().cloned().fold(f64::MAX, f64::min);
         let max = times.iter().cloned().fold(f64::MIN, f64::max);
 
-        println!();
-        println!("Results:");
-        println!("  Min: {:.2} ms", min);
-        println!("  Max: {:.2} ms", max);
-        println!("  Avg: {:.2} ms", avg);
-        println!(
-            "  Throughput: {:.0} hints/sec",
-            total_hints as f64 / (avg / 1000.0)
-        );
+        info!("Results: min={:.2}ms max={:.2}ms avg={:.2}ms throughput={:.0} hints/sec",
+            min, max, avg, total_hints as f64 / (avg / 1000.0));
     }
 
     #[cfg(not(feature = "cuda"))]
     {
         let _ = args.kernel;
-        eprintln!("ERROR: CUDA feature not enabled. Rebuild with --features cuda");
+        error!("CUDA feature not enabled. Rebuild with --features cuda");
         std::process::exit(1);
     }
 

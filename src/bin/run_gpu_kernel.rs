@@ -5,6 +5,7 @@
 //!     --db data/database.bin --subsets subsets.bin --hint-start 0 --hint-count 1000
 
 use clap::Parser;
+use log::{error, info};
 use std::fs::File;
 use std::io::{self, BufReader, Read, Write};
 use std::path::PathBuf;
@@ -40,10 +41,10 @@ struct Args {
 }
 
 fn main() -> io::Result<()> {
+    env_logger::init();
     let args = Args::parse();
 
-    println!("RMS24 GPU Kernel Runner (Phase 2)");
-    println!("==================================");
+    info!("RMS24 GPU Kernel Runner (Phase 2)");
 
     let db_data = if args.db.starts_with("synthetic:") {
         let size_mb: usize = args.db.strip_prefix("synthetic:").unwrap().parse().unwrap();
@@ -53,9 +54,9 @@ fn main() -> io::Result<()> {
     };
 
     let num_entries = db_data.len() / args.entry_size;
-    println!("Database: {} ({:.2} GB)", args.db, db_data.len() as f64 / 1e9);
+    info!("Database: {} ({:.2} GB)", args.db, db_data.len() as f64 / 1e9);
 
-    println!("Loading subsets from {}...", args.subsets.display());
+    info!("Loading subsets from {}...", args.subsets.display());
     let file = File::open(&args.subsets)?;
     let mut reader = BufReader::new(file);
 
@@ -65,7 +66,7 @@ fn main() -> io::Result<()> {
     reader.read_exact(&mut buf4)?;
     let total_blocks_in_file = u32::from_le_bytes(buf4);
 
-    println!("Subset file: {} hints, {} total blocks", total_hints_in_file, total_blocks_in_file);
+    info!("Subset file: {} hints, {} total blocks", total_hints_in_file, total_blocks_in_file);
 
     fn read_u32_vec(reader: &mut BufReader<File>, count: usize) -> io::Result<Vec<u32>> {
         let mut data = vec![0u32; count];
@@ -88,7 +89,7 @@ fn main() -> io::Result<()> {
     let hint_end = (hint_start + args.hint_count as usize).min(total_hints_in_file as usize);
     let hint_count = hint_end - hint_start;
 
-    println!("Processing hints {}..{} ({} hints)", hint_start, hint_end, hint_count);
+    info!("Processing hints {}..{} ({} hints)", hint_start, hint_end, hint_count);
 
     let block_start = all_starts[hint_start] as usize;
     let block_end = if hint_end < total_hints_in_file as usize {
@@ -110,8 +111,7 @@ fn main() -> io::Result<()> {
         is_regular: vec![true; hint_count],
     };
 
-    println!("Subset shard: {} blocks", subset_data.blocks.len());
-    io::stdout().flush()?;
+    info!("Subset shard: {} blocks", subset_data.blocks.len());
 
     #[cfg(feature = "cuda")]
     {
@@ -129,26 +129,24 @@ fn main() -> io::Result<()> {
             _padding: 0,
         };
 
-        println!("Initializing GPU...");
-        io::stdout().flush()?;
+        info!("Initializing GPU...");
         let generator = GpuHintGenerator::new(0).expect("Failed to init GPU");
 
-        println!("Running GPU kernel...");
-        io::stdout().flush()?;
+        info!("Running GPU kernel...");
         let start = Instant::now();
         let output = generator
             .generate_hints_warp(&db_data, &subset_data, gpu_params)
             .expect("GPU kernel failed");
         let elapsed = start.elapsed();
 
-        println!("GPU time: {:.2}ms", elapsed.as_millis());
-        println!("Throughput: {:.0} hints/sec", hint_count as f64 / elapsed.as_secs_f64());
-        println!("Generated {} parities", output.len());
+        info!("GPU time: {:.2}ms", elapsed.as_millis());
+        info!("Throughput: {:.0} hints/sec", hint_count as f64 / elapsed.as_secs_f64());
+        info!("Generated {} parities", output.len());
     }
 
     #[cfg(not(feature = "cuda"))]
     {
-        eprintln!("ERROR: CUDA feature not enabled");
+        error!("CUDA feature not enabled. Rebuild with --features cuda");
         std::process::exit(1);
     }
 

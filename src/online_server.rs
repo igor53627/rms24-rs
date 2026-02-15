@@ -26,15 +26,24 @@ impl<D: Db> ServerCore<D> {
         match (cfg.mode, query) {
             (Mode::Rms24, Query::Rms24 { id, subset }) => {
                 let rms_query = RmsQuery { id, subset };
-                let reply = self.server.answer(&rms_query).map_err(|e| OnlineError::Server(e.to_string()))?;
+                let reply = self.server.answer(&rms_query).map_err(|e| {
+                    log::warn!("rms24 query id={} failed: {}", id, e);
+                    OnlineError::Server(e.to_string())
+                })?;
                 Ok(Reply::Rms24 { id: reply.id, parity: reply.parity })
             }
             (Mode::KeywordPir, Query::KeywordPir { id, keyword }) => {
-                let handler = self.keyword_handler.as_ref().ok_or(OnlineError::Unsupported)?;
+                let handler = self.keyword_handler.as_ref().ok_or_else(|| {
+                    log::warn!("keywordpir query id={} rejected: no handler configured", id);
+                    OnlineError::Unsupported
+                })?;
                 let payload = handler.answer(&keyword)?;
                 Ok(Reply::KeywordPir { id, payload })
             }
-            _ => Err(OnlineError::Protocol),
+            _ => {
+                log::warn!("protocol mismatch: mode={:?}", cfg.mode);
+                Err(OnlineError::Protocol)
+            }
         }
     }
 }

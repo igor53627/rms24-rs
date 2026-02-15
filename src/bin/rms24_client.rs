@@ -1,4 +1,5 @@
 use clap::Parser;
+use log::{debug, info, warn};
 use rms24::bench_framing::{read_frame, write_frame};
 use rms24::bench_proto::{BatchRequest, ClientFrame, Mode, Query, Reply, RunConfig, ServerFrame};
 use rms24::bench_timing::TimingCounters;
@@ -365,7 +366,7 @@ fn load_cached_client(
         Ok(bytes) => bytes,
         Err(err) => {
             if err.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("state_cache=read_error path={} err={}", path.display(), err);
+                warn!("state_cache=read_error path={} err={}", path.display(), err);
             }
             return None;
         }
@@ -373,7 +374,7 @@ fn load_cached_client(
     let client = match OnlineClient::deserialize_state(&bytes) {
         Ok(client) => client,
         Err(err) => {
-            eprintln!(
+            warn!(
                 "state_cache=deserialize_error path={} err={}",
                 path.display(),
                 err
@@ -382,16 +383,16 @@ fn load_cached_client(
         }
     };
     if !params_match(&client.params, params) {
-        eprintln!("state_cache=param_mismatch path={}", path.display());
+        warn!("state_cache=param_mismatch path={}", path.display());
         return None;
     }
     if let Some(expected_prf) = expected_prf {
         if client.prf.key() != expected_prf {
-            eprintln!("state_cache=prf_mismatch path={}", path.display());
+            warn!("state_cache=prf_mismatch path={}", path.display());
             return None;
         }
     } else {
-        eprintln!("state_cache=skip_prf_check path={}", path.display());
+        debug!("state_cache=skip_prf_check path={}", path.display());
     }
     Some(client)
 }
@@ -417,19 +418,19 @@ fn load_or_generate_client(
     let expected_prf = if seed == 0 { None } else { Some(*prf.key()) };
     if let Some(path) = state_path {
         if let Some(client) = load_cached_client(path, &params, expected_prf.as_ref()) {
-            println!("state_cache=hit path={}", path.display());
+            info!("state_cache=hit path={}", path.display());
             return Ok(client);
         }
     }
 
     let mut client = OnlineClient::new(params, prf, seed);
-    println!("state_cache=miss");
+    info!("state_cache=miss");
     client.generate_hints(db)?;
     if let Some(path) = state_path {
         if let Err(err) = save_cached_client(&client, path) {
-            eprintln!("state_cache=save_error path={} err={}", path.display(), err);
+            warn!("state_cache=save_error path={} err={}", path.display(), err);
         } else {
-            println!("state_cache=saved path={}", path.display());
+            info!("state_cache=saved path={}", path.display());
         }
     }
     Ok(client)
@@ -728,6 +729,7 @@ fn run_keywordpir_keys(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let args = Args::parse();
     let batch_size = args.batch_size.max(1);
     let mode = match args.mode.as_str() {
@@ -957,7 +959,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ref mut timing) = timing {
             timing.add(phase, micros);
             if timing.should_log(phase) {
-                println!("{}", timing.summary_line(phase));
+                info!("{}", timing.summary_line(phase));
             }
         }
     };
@@ -1067,10 +1069,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let elapsed = start.elapsed();
-    println!("elapsed_ms={}", elapsed.as_millis());
+    info!("elapsed_ms={}", elapsed.as_millis());
     if let Some(timing) = timing {
         for phase in PHASES {
-            println!("{}", timing.summary_line(phase));
+            info!("{}", timing.summary_line(phase));
         }
     }
     Ok(())
