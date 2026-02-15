@@ -71,12 +71,14 @@ fn handle_single<D: Db>(server: &Server<D>, query: Query, max_batch: usize) -> S
 /// Handle a batch of queries, rejecting batches larger than max_batch.
 fn handle_batch<D: Db>(server: &Server<D>, batch: BatchRequest, max_batch: usize) -> ServerFrame {
     if batch.queries.len() > max_batch {
+        log::warn!("batch rejected: {} queries exceeds max_batch {}", batch.queries.len(), max_batch);
         return ServerFrame::Error {
             message: format!("batch too large: {}", batch.queries.len()),
         };
     }
     let total_cost: usize = batch.queries.iter().map(query_cost).sum();
     if total_cost > max_batch {
+        log::warn!("batch rejected: total_cost {} exceeds max_batch {}", total_cost, max_batch);
         return ServerFrame::Error {
             message: format!("batch too large: {}", total_cost),
         };

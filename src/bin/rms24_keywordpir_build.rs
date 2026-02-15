@@ -144,6 +144,7 @@ fn write_metadata(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let args = Args::parse();
     if args.bucket_size == 0 {
         return Err("bucket_size must be >0".into());

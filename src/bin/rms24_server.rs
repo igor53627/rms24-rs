@@ -1,4 +1,5 @@
 use clap::Parser;
+use log::{debug, error, info, warn};
 use rms24::bench_framing::{read_frame, write_frame};
 use rms24::bench_handler::handle_client_frame;
 use rms24::bench_proto::{ClientFrame, RunConfig};
@@ -39,7 +40,7 @@ const TIMING_PHASES: [&str; 5] = [
 
 fn print_timing_summary(timing: &TimingCounters) {
     for phase in TIMING_PHASES {
-        println!("{}", timing.summary_line(phase));
+        info!("{}", timing.summary_line(phase));
     }
 }
 
@@ -67,7 +68,7 @@ fn handle_client(
         if let Some(ref mut timing) = timing {
             timing.add(phase, micros);
             if timing.should_log(phase) {
-                println!("{}", timing.summary_line(phase));
+                info!("{}", timing.summary_line(phase));
             }
         }
     };
@@ -88,10 +89,7 @@ fn handle_client(
         };
         let deserialize_start = Instant::now();
         let frame: ClientFrame = parse_client_frame(&msg)?;
-        record(
-            "deserialize",
-            deserialize_start.elapsed().as_micros() as u64,
-        );
+        record("deserialize", deserialize_start.elapsed().as_micros() as u64);
         let answer_start = Instant::now();
         let out = handle_client_frame(&server, frame, max_batch);
         record("answer", answer_start.elapsed().as_micros() as u64);
@@ -99,7 +97,7 @@ fn handle_client(
         let out_bytes = match bincode::serialize(&out) {
             Ok(bytes) => bytes,
             Err(err) => {
-                eprintln!("failed to serialize response: {err}");
+                error!("failed to serialize response: {err}");
                 return Err(io::Error::new(io::ErrorKind::InvalidData, err));
             }
         };
@@ -133,7 +131,9 @@ fn build_server(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let args = Args::parse();
+    info!("loading db path={} entry_size={} lambda={}", args.db, args.entry_size, args.lambda);
     let server = build_server(&args.db, args.entry_size, args.lambda)?;
     let server = Arc::new(server);
     let timing_enabled = args.timing;
@@ -141,17 +141,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_batch_queries = args.max_batch_queries;
 
     let listener = TcpListener::bind(&args.listen)?;
+    info!("listening on {}", args.listen);
     for stream in listener.incoming() {
         let server = Arc::clone(&server);
+        let timing_enabled = timing_enabled;
+        let timing_every = timing_every;
+        let max_batch_queries = max_batch_queries;
         thread::spawn(move || {
-            if let Ok(stream) = stream {
-                let _ = handle_client(
-                    stream,
-                    server,
-                    timing_enabled,
-                    timing_every,
-                    max_batch_queries,
-                );
+            match stream {
+                Ok(stream) => {
+                    let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+                    debug!("client connected peer={}", peer);
+                    if let Err(err) = handle_client(stream, server, timing_enabled, timing_every, max_batch_queries) {
+                        debug!("client disconnected peer={} reason={}", peer, err);
+                    }
+                }
+                Err(err) => {
+                    warn!("failed to accept connection: {}", err);
+                }
             }
         });
     }
@@ -267,10 +274,7 @@ mod tests {
         std::fs::write(&path, &db).unwrap();
 
         let server = build_server(path.to_str().unwrap(), entry_size, 2).unwrap();
-        let query = RmsQuery {
-            id: 1,
-            subset: vec![(0, 9)],
-        };
+        let query = RmsQuery { id: 1, subset: vec![(0, 9)] };
         let reply = server.answer(&query).unwrap();
         assert_eq!(reply.parity.len(), entry_size);
 

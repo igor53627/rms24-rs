@@ -19,10 +19,12 @@ pub struct Prf {
 }
 
 impl Prf {
+    /// Create a PRF from a given 32-byte key.
     pub fn new(key: [u8; 32]) -> Self {
         Self { key }
     }
 
+    /// Create a PRF with a random key.
     pub fn random() -> Self {
         let mut key = [0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut key);

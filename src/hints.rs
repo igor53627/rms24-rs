@@ -2,8 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Precomputed subset for a single hint.
-/// Used to pass subset data to GPU without per-block PRF calls.
+/// Precomputed subset for a single hint, used for GPU transfer.
 pub struct HintSubset {
     /// Sorted block indices in the subset (blocks with select < cutoff)
     pub blocks: Vec<u32>,
@@ -18,6 +17,7 @@ pub struct HintSubset {
 }
 
 impl HintSubset {
+    /// Create an empty hint subset.
     pub fn new() -> Self {
         Self {
             blocks: Vec::new(),
@@ -55,6 +55,7 @@ pub struct SubsetData {
 }
 
 impl SubsetData {
+    /// Flatten a slice of [`HintSubset`]s into contiguous GPU-ready arrays.
     pub fn from_subsets(subsets: &[HintSubset]) -> Self {
         let total_blocks: usize = subsets.iter().map(|s| s.blocks.len()).sum();
         let mut blocks = Vec::with_capacity(total_blocks);
@@ -114,6 +115,7 @@ pub struct HintState {
 }
 
 impl HintState {
+    /// Allocate a zeroed hint state for the given hint counts and entry size.
     pub fn new(num_reg_hints: usize, num_backup_hints: usize, entry_size: usize) -> Self {
         let total = num_reg_hints + num_backup_hints;
         Self {
@@ -128,6 +130,7 @@ impl HintState {
         }
     }
 
+    /// Return a zero-filled parity vector with the configured entry size.
     pub fn zero_parity(&self) -> Vec<u8> {
         vec![0u8; self.entry_size]
     }
@@ -145,7 +148,6 @@ pub fn xor_bytes_inplace(a: &mut [u8], b: &[u8]) {
 ///
 /// Returns cutoff such that exactly len/2 elements are smaller,
 /// or 0 if the two middle values collide (~2^-32 probability).
-/// Find median cutoff value in-place.
 pub fn find_median_cutoff(v: &mut [u32]) -> u32 {
     debug_assert!(v.len().is_multiple_of(2), "Length must be even");
     let mid = v.len() / 2;

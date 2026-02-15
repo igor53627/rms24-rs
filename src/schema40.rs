@@ -10,10 +10,12 @@ pub const STORAGE_VALUE_SIZE: usize = 32;
 pub const STORAGE_PADDING_SIZE: usize = 0;
 pub const CODE_ID_NONE: u32 = 0;
 
+/// 8-byte fingerprint derived from an Ethereum address (or address+slot).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tag(pub [u8; TAG_SIZE]);
 
 impl Tag {
+    /// Compute tag from a 20-byte Ethereum address using Keccak256.
     pub fn from_address(address: &[u8; 20]) -> Self {
         let mut hasher = Keccak256::new();
         hasher.update(address);
@@ -23,6 +25,7 @@ impl Tag {
         Tag(tag)
     }
 
+    /// Compute tag from an address and 32-byte storage slot key.
     pub fn from_address_slot(address: &[u8; 20], slot_key: &[u8; 32]) -> Self {
         let mut hasher = Keccak256::new();
         hasher.update(address);
@@ -33,36 +36,44 @@ impl Tag {
         Tag(tag)
     }
 
+    /// Return the tag bytes.
     pub fn as_bytes(&self) -> &[u8; TAG_SIZE] {
         &self.0
     }
 }
 
+/// Compact identifier for a contract's bytecode hash (0 = EOA).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CodeId(pub u32);
 
 impl CodeId {
+    /// Wrap a raw u32 into a [`CodeId`].
     pub fn new(id: u32) -> Self {
         CodeId(id)
     }
 
+    /// Returns true if this is the EOA sentinel (no code).
     pub fn is_eoa(&self) -> bool {
         self.0 == CODE_ID_NONE
     }
 
+    /// Return the raw u32 value.
     pub fn as_u32(&self) -> u32 {
         self.0
     }
 
+    /// Serialize to little-endian bytes.
     pub fn to_le_bytes(&self) -> [u8; CODE_ID_SIZE] {
         self.0.to_le_bytes()
     }
 
+    /// Deserialize from little-endian bytes.
     pub fn from_le_bytes(bytes: [u8; CODE_ID_SIZE]) -> Self {
         CodeId(u32::from_le_bytes(bytes))
     }
 }
 
+/// 40-byte account entry: balance(16) + nonce(4) + code_id(4) + tag(8) + padding(8).
 #[derive(Clone, Copy, Debug)]
 pub struct AccountEntry40 {
     pub balance: [u8; BALANCE_SIZE],
@@ -73,6 +84,7 @@ pub struct AccountEntry40 {
 }
 
 impl AccountEntry40 {
+    /// Create an account entry, truncating balance to 16 bytes and nonce to u32.
     pub fn new(balance_256: &[u8; 32], nonce: u64, code_id: CodeId, address: &[u8; 20]) -> Self {
         let mut balance = [0u8; BALANCE_SIZE];
         balance.copy_from_slice(&balance_256[..BALANCE_SIZE]);
@@ -90,6 +102,7 @@ impl AccountEntry40 {
         }
     }
 
+    /// Serialize to a 40-byte array.
     pub fn to_bytes(&self) -> [u8; ENTRY_SIZE] {
         let mut bytes = [0u8; ENTRY_SIZE];
         bytes[0..16].copy_from_slice(&self.balance);
@@ -99,6 +112,7 @@ impl AccountEntry40 {
         bytes
     }
 
+    /// Deserialize from a 40-byte array.
     pub fn from_bytes(bytes: &[u8; ENTRY_SIZE]) -> Self {
         let mut balance = [0u8; BALANCE_SIZE];
         balance.copy_from_slice(&bytes[0..16]);
@@ -118,11 +132,13 @@ impl AccountEntry40 {
         }
     }
 
+    /// Return the nonce as u64.
     pub fn nonce_u64(&self) -> u64 {
         self.nonce as u64
     }
 }
 
+/// 40-byte storage entry: value(32) + tag(8).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StorageEntry40 {
     pub value: [u8; STORAGE_VALUE_SIZE],
@@ -130,6 +146,7 @@ pub struct StorageEntry40 {
 }
 
 impl StorageEntry40 {
+    /// Create a storage entry from a 32-byte value, address, and slot key.
     pub fn new(value: &[u8; 32], address: &[u8; 20], slot_key: &[u8; 32]) -> Self {
         Self {
             value: *value,
@@ -137,6 +154,7 @@ impl StorageEntry40 {
         }
     }
 
+    /// Serialize to a 40-byte array.
     pub fn to_bytes(&self) -> [u8; ENTRY_SIZE] {
         let mut bytes = [0u8; ENTRY_SIZE];
         bytes[0..32].copy_from_slice(&self.value);
@@ -144,6 +162,7 @@ impl StorageEntry40 {
         bytes
     }
 
+    /// Deserialize from a 40-byte array.
     pub fn from_bytes(bytes: &[u8; ENTRY_SIZE]) -> Self {
         let mut value = [0u8; STORAGE_VALUE_SIZE];
         value.copy_from_slice(&bytes[0..32]);
@@ -156,6 +175,7 @@ impl StorageEntry40 {
     }
 }
 
+/// Bidirectional mapping between bytecode hashes and compact [`CodeId`]s.
 #[derive(Debug, Default)]
 pub struct CodeStore {
     hashes: Vec<[u8; 32]>,
@@ -163,10 +183,12 @@ pub struct CodeStore {
 }
 
 impl CodeStore {
+    /// Create an empty code store.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Return the [`CodeId`] for a bytecode hash, inserting if new. `None` or zero hash returns EOA.
     pub fn get_or_insert(&mut self, hash: Option<&[u8; 32]>) -> CodeId {
         let hash = match hash {
             Some(h) if *h != [0u8; 32] => h,
@@ -185,6 +207,7 @@ impl CodeStore {
         id
     }
 
+    /// Look up the bytecode hash for a [`CodeId`]. Returns `None` for EOA.
     pub fn get(&self, id: CodeId) -> Option<&[u8; 32]> {
         if id.is_eoa() {
             return None;
@@ -192,14 +215,17 @@ impl CodeStore {
         self.hashes.get((id.0 - 1) as usize)
     }
 
+    /// Return the number of stored bytecode hashes.
     pub fn len(&self) -> usize {
         self.hashes.len()
     }
 
+    /// Returns true if no bytecode hashes are stored.
     pub fn is_empty(&self) -> bool {
         self.hashes.is_empty()
     }
 
+    /// Serialize the code store to bytes (4-byte count + 32-byte hashes).
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(4 + self.hashes.len() * 32);
         bytes.extend_from_slice(&(self.hashes.len() as u32).to_le_bytes());
@@ -209,6 +235,7 @@ impl CodeStore {
         bytes
     }
 
+    /// Deserialize a code store from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() < 4 {
             return Err("Code store too short".to_string());
