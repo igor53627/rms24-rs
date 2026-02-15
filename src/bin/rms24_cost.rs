@@ -6,7 +6,7 @@ use rms24::params::Params;
 #[command(about = "Estimate RMS24 PIR resource costs by component")]
 struct Args {
     /// Number of database entries
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     num_entries: u64,
 
     /// Entry size in bytes
