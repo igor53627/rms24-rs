@@ -21,6 +21,7 @@ pub mod bench_framing;
 pub mod bench_timing;
 pub mod bench_handler;
 pub mod keyword_pir;
+pub mod cost;
 
 #[cfg(feature = "cuda")]
 pub mod gpu;
