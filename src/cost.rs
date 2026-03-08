@@ -11,7 +11,7 @@ const EXTRA_OFFSET_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 const FLIP_BYTES: u64 = std::mem::size_of::<u8>() as u64;
 const PER_HINT_META_BYTES: u64 = CUTOFF_BYTES + EXTRA_BLOCK_BYTES + EXTRA_OFFSET_BYTES + FLIP_BYTES;
 const QUERY_ELEMENT_BYTES: u64 = std::mem::size_of::<(u32, u32)>() as u64;
-const EXTRA_QUERY_ELEMENTS_PER_HINT: u64 = 1;
+const EXTRA_QUERY_ELEMENTS_PER_PAIR: u64 = 1;
 const BYTES_PER_KIB: f64 = 1024.0;
 const BYTES_PER_MIB: f64 = BYTES_PER_KIB * 1024.0;
 
@@ -26,14 +26,23 @@ fn checked_mul(a: u64, b: u64, _ctx: &'static str) -> u64 {
 /// Per-component cost breakdown for the RMS24 PIR protocol.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct CostReport {
+    /// Protocol parameters used for this estimate.
     pub params: Params,
+    /// Client storage for hint metadata and parity bytes.
     pub client_hint_storage_bytes: u64,
+    /// Server storage for database bytes.
     pub server_db_storage_bytes: u64,
+    /// Offline bandwidth for hint generation.
     pub offline_bandwidth_bytes: u64,
+    /// Total online bandwidth per real+dummy query pair.
     pub online_query_bandwidth_bytes: u64,
+    /// Upload bytes per real+dummy query pair.
     pub online_upload_bytes: u64,
+    /// Download bytes per real+dummy query pair.
     pub online_download_bytes: u64,
+    /// Server XOR byte operations per real+dummy query pair.
     pub server_xor_ops_per_query: u64,
+    /// Optional KeywordPIR overhead metrics.
     pub keyword_pir: Option<KeywordPirCost>,
 }
 
@@ -83,22 +92,18 @@ pub fn estimate(params: &Params, cuckoo: Option<&CuckooParams>) -> CostReport {
         "offline bandwidth bytes overflow",
     );
 
-    // Expected subset size: approximately num_blocks / 2 (median split)
-    // Each regular hint also adds one extra entry.
-    let subset_size = params.num_blocks / 2;
-    let subset_elements_per_query = checked_add(
-        subset_size,
-        EXTRA_QUERY_ELEMENTS_PER_HINT,
+    // Expected selected subset size per hint: approximately num_blocks / 2 (median split).
+    // A real+dummy query pair carries one extra entry overall:
+    // regular subset includes one extra element, and target removal drops one from the real side.
+    let subset_elements_per_query_pair = checked_add(
+        params.num_blocks,
+        EXTRA_QUERY_ELEMENTS_PER_PAIR,
         "subset element count overflow",
     );
 
-    // Online upload per query: 2 queries (real + dummy), each sends subset as Vec<(u32, u32)>
+    // Online upload per query pair (real + dummy): subset as Vec<(u32, u32)>
     let online_upload_bytes = checked_mul(
-        checked_mul(
-            2,
-            subset_elements_per_query,
-            "online upload subset count overflow",
-        ),
+        subset_elements_per_query_pair,
         QUERY_ELEMENT_BYTES,
         "online upload bytes overflow",
     );
@@ -113,13 +118,9 @@ pub fn estimate(params: &Params, cuckoo: Option<&CuckooParams>) -> CostReport {
         "online query bandwidth overflow",
     );
 
-    // Server XOR operations per query: 2 queries × subset_size entries × entry_size bytes XORed
+    // Server XOR operations per query pair: one XOR over each uploaded element.
     let server_xor_ops_per_query = checked_mul(
-        checked_mul(
-            2,
-            subset_elements_per_query,
-            "server xor subset count overflow",
-        ),
+        subset_elements_per_query_pair,
         entry_size,
         "server xor operation bytes overflow",
     );
@@ -282,10 +283,9 @@ mod tests {
         let params = Params::new(10_000, 40, 128);
         let report = estimate(&params, None);
 
-        let subset_size = params.num_blocks / 2;
         assert_eq!(
             report.online_upload_bytes,
-            2 * (subset_size + EXTRA_QUERY_ELEMENTS_PER_HINT) * QUERY_ELEMENT_BYTES
+            (params.num_blocks + EXTRA_QUERY_ELEMENTS_PER_PAIR) * QUERY_ELEMENT_BYTES
         );
         assert_eq!(report.online_download_bytes, 2 * 40);
         assert_eq!(
@@ -299,10 +299,9 @@ mod tests {
         let params = Params::new(10_000, 40, 128);
         let report = estimate(&params, None);
 
-        let subset_size = params.num_blocks / 2;
         assert_eq!(
             report.server_xor_ops_per_query,
-            2 * (subset_size + EXTRA_QUERY_ELEMENTS_PER_HINT) * 40
+            (params.num_blocks + EXTRA_QUERY_ELEMENTS_PER_PAIR) * 40
         );
     }
 
