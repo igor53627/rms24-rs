@@ -107,35 +107,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Documentation
 
-- Add KANBAN with next steps (`dc4683f`)
-- Update KANBAN with H200 benchmark results (`6b42350`)
 - Update benchmark results with warp kernel performance (`32c6e91`)
 - Add multi-GPU benchmark results (`cc3c7d7`)
 - Add distributed benchmark results (`72bf9e2`)
 - Update benchmark results — 22,855 hints/sec on 50 H200s (`6accd17`)
 - Add architecture diagrams (`9bfe4cd`)
 - Move design and plan notes from rms24 (`e461c4a`)
-- Add baseline docs and worktree ignore (`3cdf788`)
-- Add schema40 v3 plan (`88539b3`)
 - Add online protocol design (`a77dc93`, `a8a49ba`)
 - Document online protocol (`c84a1c3`)
-- Add online protocol implementation plan (`b937b99`)
-- Add coverage index design (`a2356c6`)
 - Document coverage index flag (`8c662e2`)
-- Add coverage index implementation plan (`36c38dc`)
-- Add client state cache design (`0b9ee01`, `1f95293`)
-- Add updated benchmark implementation plan (`2c2f931`)
-- Add runtime optimizations design (`6381518`)
 - Document timing flags (`0d69372`)
 - Document subset cache and coverage env (`e43f4a4`)
 - Add batching flags (`7580411`)
-- Add batching implementation plan (`4ed4135`)
 - Add rms24 batching q200 report (`f5ad3e7`)
-- Add keywordpir implementation plan (`ae405f3`)
-- Add coderabbit fix plan (`0f5a114`)
-- Fix report inconsistencies and plan issues (`6d522d4`)
-- Refresh kanban priorities (`2ddebb9`)
-- Update kanban and keywordpir plan (`2f031af`)
 - Clarify keywordpir collision routing (`cd33aea`)
 
 ### Tests
@@ -155,10 +139,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Select covered index in coverage query test (`d3a47b4`)
 - Guard RMS24_COVERAGE_INDEX env var (`820df22`)
 
-### Chores
-
-- Add serde, bincode, sha3 deps (`e38d694`)
-- Drop unused bench import (`3287f3c`)
-- Ignore .DS_Store (`c5f1654`)
-- Snapshot root worktree changes (`05a2490`)
-- Client state cache and progress logs (`1fce467`)
+[Unreleased]: https://github.com/igor53627/rms24-rs/compare/c644942...HEAD

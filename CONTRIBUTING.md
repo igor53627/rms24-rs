@@ -38,7 +38,7 @@ Good:
 ```text
 feat: add user authentication
 fix(parser): handle empty input
-docs: clarify keywordpir collision routing
+docs: clarify keyword collision routing
 test: add coverage for edge cases
 chore: update dependencies
 feat!: drop support for legacy format
