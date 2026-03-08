@@ -95,9 +95,8 @@ pub fn estimate(params: &Params, cuckoo: Option<&CuckooParams>) -> CostReport {
     // Expected selected subset size per hint: approximately num_blocks / 2 (median split).
     // A real+dummy query pair carries one extra entry overall:
     // regular subset includes one extra element, and target removal drops one from the real side.
-    let subset_size = params.num_blocks / 2;
     let subset_elements_per_query_pair = checked_add(
-        checked_mul(2, subset_size, "subset element count overflow"),
+        params.num_blocks,
         EXTRA_QUERY_ELEMENTS_PER_PAIR,
         "subset element count overflow",
     );
@@ -284,10 +283,9 @@ mod tests {
         let params = Params::new(10_000, 40, 128);
         let report = estimate(&params, None);
 
-        let subset_size = params.num_blocks / 2;
         assert_eq!(
             report.online_upload_bytes,
-            (2 * subset_size + EXTRA_QUERY_ELEMENTS_PER_PAIR) * QUERY_ELEMENT_BYTES
+            (params.num_blocks + EXTRA_QUERY_ELEMENTS_PER_PAIR) * QUERY_ELEMENT_BYTES
         );
         assert_eq!(report.online_download_bytes, 2 * 40);
         assert_eq!(
@@ -301,10 +299,9 @@ mod tests {
         let params = Params::new(10_000, 40, 128);
         let report = estimate(&params, None);
 
-        let subset_size = params.num_blocks / 2;
         assert_eq!(
             report.server_xor_ops_per_query,
-            (2 * subset_size + EXTRA_QUERY_ELEMENTS_PER_PAIR) * 40
+            (params.num_blocks + EXTRA_QUERY_ELEMENTS_PER_PAIR) * 40
         );
     }
 
