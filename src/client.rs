@@ -263,14 +263,12 @@ impl Client {
                             }
                             let entry = &db[entry_start..entry_start + entry_size];
 
-                            if hint_idx < num_reg {
-                                if select_val < cutoff {
-                                    xor_bytes_inplace(&mut parity, entry);
-                                }
-                            } else if select_val < cutoff {
+                            if select_val < cutoff {
                                 xor_bytes_inplace(&mut parity, entry);
-                            } else if let Some(ref mut backup) = backup_high {
-                                xor_bytes_inplace(backup, entry);
+                            } else if hint_idx >= num_reg {
+                                if let Some(ref mut backup) = backup_high {
+                                    xor_bytes_inplace(backup, entry);
+                                }
                             }
                         }
 
