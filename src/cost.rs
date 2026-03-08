@@ -26,14 +26,23 @@ fn checked_mul(a: u64, b: u64, _ctx: &'static str) -> u64 {
 /// Per-component cost breakdown for the RMS24 PIR protocol.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct CostReport {
+    /// Protocol parameters used for this estimate.
     pub params: Params,
+    /// Client storage for hint metadata and parity bytes.
     pub client_hint_storage_bytes: u64,
+    /// Server storage for database bytes.
     pub server_db_storage_bytes: u64,
+    /// Offline bandwidth for hint generation.
     pub offline_bandwidth_bytes: u64,
+    /// Total online bandwidth per real+dummy query pair.
     pub online_query_bandwidth_bytes: u64,
+    /// Upload bytes per real+dummy query pair.
     pub online_upload_bytes: u64,
+    /// Download bytes per real+dummy query pair.
     pub online_download_bytes: u64,
+    /// Server XOR byte operations per real+dummy query pair.
     pub server_xor_ops_per_query: u64,
+    /// Optional KeywordPIR overhead metrics.
     pub keyword_pir: Option<KeywordPirCost>,
 }
 
