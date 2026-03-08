@@ -1,6 +1,7 @@
 use clap::Parser;
 use rms24::cost::{estimate, CuckooParams};
 use rms24::params::Params;
+use serde::Serialize;
 
 #[derive(Parser)]
 #[command(about = "Estimate RMS24 PIR resource costs by component")]
@@ -34,8 +35,9 @@ struct Args {
     json: bool,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    validate_args(&args)?;
 
     let params = Params::new(args.num_entries, args.entry_size, args.lambda);
 
@@ -48,40 +50,70 @@ fn main() {
     let report = estimate(&params, cuckoo.as_ref());
 
     if args.json {
-        print_json(&report);
+        print_json(&report)?;
     } else {
         print!("{}", report);
     }
+
+    Ok(())
 }
 
-fn print_json(report: &rms24::cost::CostReport) {
-    let kp_json = if let Some(kp) = &report.keyword_pir {
-        format!(
-            r#", "keyword_pir": {{ "cuckoo_table_entries": {}, "cuckoo_expansion_factor": {:.4}, "queries_per_lookup": {}, "total_bandwidth_per_lookup_bytes": {} }}"#,
-            kp.cuckoo_table_entries,
-            kp.cuckoo_expansion_factor,
-            kp.queries_per_lookup,
-            kp.total_bandwidth_per_lookup_bytes,
+fn validate_args(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    if args.entry_size == 0 {
+        return Err("entry_size must be > 0".into());
+    }
+
+    let entry_size = u64::try_from(args.entry_size).map_err(|_| "entry_size too large")?;
+    let max_entries = u64::MAX / entry_size;
+    if args.num_entries > max_entries {
+        return Err(format!(
+            "num_entries too large for entry_size {} (max {})",
+            args.entry_size, max_entries
         )
-    } else {
-        String::new()
+        .into());
+    }
+
+    Ok(())
+}
+
+fn print_json(report: &rms24::cost::CostReport) -> Result<(), serde_json::Error> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "snake_case")]
+    struct JsonReport<'a> {
+        num_entries: u64,
+        entry_size: usize,
+        security_param: u32,
+        block_size: u64,
+        num_blocks: u64,
+        total_hints: u64,
+        client_hint_storage_bytes: u64,
+        server_db_storage_bytes: u64,
+        offline_bandwidth_bytes: u64,
+        online_upload_bytes: u64,
+        online_download_bytes: u64,
+        online_query_bandwidth_bytes: u64,
+        server_xor_ops_per_query: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        keyword_pir: Option<&'a rms24::cost::KeywordPirCost>,
+    }
+
+    let json_report = JsonReport {
+        num_entries: report.params.num_entries,
+        entry_size: report.params.entry_size,
+        security_param: report.params.security_param,
+        block_size: report.params.block_size,
+        num_blocks: report.params.num_blocks,
+        total_hints: report.params.total_hints(),
+        client_hint_storage_bytes: report.client_hint_storage_bytes,
+        server_db_storage_bytes: report.server_db_storage_bytes,
+        offline_bandwidth_bytes: report.offline_bandwidth_bytes,
+        online_upload_bytes: report.online_upload_bytes,
+        online_download_bytes: report.online_download_bytes,
+        online_query_bandwidth_bytes: report.online_query_bandwidth_bytes,
+        server_xor_ops_per_query: report.server_xor_ops_per_query,
+        keyword_pir: report.keyword_pir.as_ref(),
     };
 
-    println!(
-        r#"{{ "num_entries": {}, "entry_size": {}, "security_param": {}, "block_size": {}, "num_blocks": {}, "total_hints": {}, "client_hint_storage_bytes": {}, "server_db_storage_bytes": {}, "offline_bandwidth_bytes": {}, "online_upload_bytes": {}, "online_download_bytes": {}, "online_query_bandwidth_bytes": {}, "server_xor_ops_per_query": {}{} }}"#,
-        report.params.num_entries,
-        report.params.entry_size,
-        report.params.security_param,
-        report.params.block_size,
-        report.params.num_blocks,
-        report.params.total_hints(),
-        report.client_hint_storage_bytes,
-        report.server_db_storage_bytes,
-        report.offline_bandwidth_bytes,
-        report.online_upload_bytes,
-        report.online_download_bytes,
-        report.online_query_bandwidth_bytes,
-        report.server_xor_ops_per_query,
-        kp_json,
-    );
+    println!("{}", serde_json::to_string_pretty(&json_report)?);
+    Ok(())
 }

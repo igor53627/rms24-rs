@@ -5,8 +5,26 @@
 
 use crate::params::Params;
 
+const CUTOFF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
+const EXTRA_BLOCK_BYTES: u64 = std::mem::size_of::<u32>() as u64;
+const EXTRA_OFFSET_BYTES: u64 = std::mem::size_of::<u32>() as u64;
+const FLIP_BYTES: u64 = std::mem::size_of::<u8>() as u64;
+const PER_HINT_META_BYTES: u64 = CUTOFF_BYTES + EXTRA_BLOCK_BYTES + EXTRA_OFFSET_BYTES + FLIP_BYTES;
+const QUERY_ELEMENT_BYTES: u64 = std::mem::size_of::<(u32, u32)>() as u64;
+const EXTRA_QUERY_ELEMENTS_PER_HINT: u64 = 1;
+const BYTES_PER_KIB: f64 = 1024.0;
+const BYTES_PER_MIB: f64 = BYTES_PER_KIB * 1024.0;
+
+fn checked_add(a: u64, b: u64, _ctx: &'static str) -> u64 {
+    (u128::from(a) + u128::from(b)).min(u128::from(u64::MAX)) as u64
+}
+
+fn checked_mul(a: u64, b: u64, _ctx: &'static str) -> u64 {
+    (u128::from(a) * u128::from(b)).min(u128::from(u64::MAX)) as u64
+}
+
 /// Per-component cost breakdown for the RMS24 PIR protocol.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct CostReport {
     pub params: Params,
     pub client_hint_storage_bytes: u64,
@@ -20,7 +38,7 @@ pub struct CostReport {
 }
 
 /// Cost overhead from KeywordPIR cuckoo hashing.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct KeywordPirCost {
     pub cuckoo_table_entries: u64,
     pub cuckoo_expansion_factor: f64,
@@ -47,45 +65,90 @@ pub fn estimate(params: &Params, cuckoo: Option<&CuckooParams>) -> CostReport {
     // Client hint storage:
     //   Per hint: cutoff(4) + extra_block(4) + extra_offset(4) + parity(entry_size) + flip(1)
     //   Plus backup hints store an additional high-parity: num_backup × entry_size
-    let per_hint_bytes = 4 + 4 + 4 + entry_size + 1;
-    let client_hint_storage_bytes =
-        total_hints * per_hint_bytes + num_backup * entry_size;
+    let per_hint_bytes = checked_add(entry_size, PER_HINT_META_BYTES, "per-hint bytes overflow");
+    let client_hint_storage_bytes = checked_add(
+        checked_mul(total_hints, per_hint_bytes, "client hint bytes overflow"),
+        checked_mul(num_backup, entry_size, "backup high parity bytes overflow"),
+        "client hint bytes overflow",
+    );
 
     // Server DB storage: num_entries × entry_size
-    let server_db_storage_bytes = params.num_entries * entry_size;
+    let server_db_storage_bytes =
+        checked_mul(params.num_entries, entry_size, "server DB bytes overflow");
 
     // Offline bandwidth: full DB scan during hint generation
-    let offline_bandwidth_bytes = params.num_entries * entry_size;
+    let offline_bandwidth_bytes = checked_mul(
+        params.num_entries,
+        entry_size,
+        "offline bandwidth bytes overflow",
+    );
 
     // Expected subset size: approximately num_blocks / 2 (median split)
+    // Each regular hint also adds one extra entry.
     let subset_size = params.num_blocks / 2;
+    let subset_elements_per_query = checked_add(
+        subset_size,
+        EXTRA_QUERY_ELEMENTS_PER_HINT,
+        "subset element count overflow",
+    );
 
     // Online upload per query: 2 queries (real + dummy), each sends subset as Vec<(u32, u32)>
-    // Each element is 8 bytes (two u32s)
-    let online_upload_bytes = 2 * subset_size * 8;
+    let online_upload_bytes = checked_mul(
+        checked_mul(
+            2,
+            subset_elements_per_query,
+            "online upload subset count overflow",
+        ),
+        QUERY_ELEMENT_BYTES,
+        "online upload bytes overflow",
+    );
 
     // Online download per query: 2 parity replies, each entry_size bytes
-    let online_download_bytes = 2 * entry_size;
+    let online_download_bytes = checked_mul(2, entry_size, "online download bytes overflow");
 
     // Total online bandwidth
-    let online_query_bandwidth_bytes = online_upload_bytes + online_download_bytes;
+    let online_query_bandwidth_bytes = checked_add(
+        online_upload_bytes,
+        online_download_bytes,
+        "online query bandwidth overflow",
+    );
 
     // Server XOR operations per query: 2 queries × subset_size entries × entry_size bytes XORed
-    let server_xor_ops_per_query = 2 * subset_size * entry_size;
+    let server_xor_ops_per_query = checked_mul(
+        checked_mul(
+            2,
+            subset_elements_per_query,
+            "server xor subset count overflow",
+        ),
+        entry_size,
+        "server xor operation bytes overflow",
+    );
 
     // KeywordPIR overhead
     let keyword_pir = cuckoo.map(|c| {
-        let cuckoo_table_entries = c.num_buckets * c.bucket_size;
+        let cuckoo_table_entries = checked_mul(
+            c.num_buckets,
+            c.bucket_size,
+            "keywordpir cuckoo table size overflow",
+        );
         let cuckoo_expansion_factor = if params.num_entries > 0 {
             cuckoo_table_entries as f64 / params.num_entries as f64
         } else {
             0.0
         };
         // Each lookup checks num_hashes buckets × bucket_size positions
-        let queries_per_lookup = c.num_hashes * c.bucket_size;
+        let queries_per_lookup = checked_mul(
+            c.num_hashes,
+            c.bucket_size,
+            "keywordpir queries-per-lookup overflow",
+        );
         // Each position requires a full PIR query (upload + download)
-        let per_query = online_upload_bytes + online_download_bytes;
-        let total_bandwidth_per_lookup_bytes = queries_per_lookup * per_query;
+        let per_query = online_query_bandwidth_bytes;
+        let total_bandwidth_per_lookup_bytes = checked_mul(
+            queries_per_lookup,
+            per_query,
+            "keywordpir bandwidth per lookup overflow",
+        );
 
         KeywordPirCost {
             cuckoo_table_entries,
@@ -122,62 +185,66 @@ impl std::fmt::Display for CostReport {
         writeln!(f, "Storage:")?;
         writeln!(
             f,
-            "  client hints:     {} ({:.2} MB)",
+            "  client hints:     {} ({:.2} MiB)",
             self.client_hint_storage_bytes,
-            self.client_hint_storage_bytes as f64 / (1024.0 * 1024.0)
+            self.client_hint_storage_bytes as f64 / BYTES_PER_MIB
         )?;
         writeln!(
             f,
-            "  server DB:        {} ({:.2} MB)",
+            "  server DB:        {} ({:.2} MiB)",
             self.server_db_storage_bytes,
-            self.server_db_storage_bytes as f64 / (1024.0 * 1024.0)
+            self.server_db_storage_bytes as f64 / BYTES_PER_MIB
         )?;
         writeln!(f)?;
         writeln!(f, "Bandwidth:")?;
         writeln!(
             f,
-            "  offline (hint gen): {} ({:.2} MB)",
+            "  offline (hint gen): {} ({:.2} MiB)",
             self.offline_bandwidth_bytes,
-            self.offline_bandwidth_bytes as f64 / (1024.0 * 1024.0)
+            self.offline_bandwidth_bytes as f64 / BYTES_PER_MIB
         )?;
         writeln!(
             f,
-            "  online upload/q:    {} ({:.2} KB)",
+            "  online upload/q:    {} ({:.2} KiB)",
             self.online_upload_bytes,
-            self.online_upload_bytes as f64 / 1024.0
+            self.online_upload_bytes as f64 / BYTES_PER_KIB
         )?;
         writeln!(
             f,
-            "  online download/q:  {} ({:.2} KB)",
+            "  online download/q:  {} ({:.2} KiB)",
             self.online_download_bytes,
-            self.online_download_bytes as f64 / 1024.0
+            self.online_download_bytes as f64 / BYTES_PER_KIB
         )?;
         writeln!(
             f,
-            "  online total/q:     {} ({:.2} KB)",
+            "  online total/q:     {} ({:.2} KiB)",
             self.online_query_bandwidth_bytes,
-            self.online_query_bandwidth_bytes as f64 / 1024.0
+            self.online_query_bandwidth_bytes as f64 / BYTES_PER_KIB
         )?;
         writeln!(f)?;
         writeln!(f, "Computation:")?;
         writeln!(
             f,
-            "  server XOR ops/q:   {} ({:.2} KB)",
+            "  server XOR ops/q:   {} ({:.2} KiB)",
             self.server_xor_ops_per_query,
-            self.server_xor_ops_per_query as f64 / 1024.0
+            self.server_xor_ops_per_query as f64 / BYTES_PER_KIB
         )?;
 
         if let Some(kp) = &self.keyword_pir {
             writeln!(f)?;
             writeln!(f, "KeywordPIR:")?;
             writeln!(f, "  cuckoo entries:     {}", kp.cuckoo_table_entries)?;
-            writeln!(f, "  expansion factor:   {:.2}x", kp.cuckoo_expansion_factor)?;
+            writeln!(
+                f,
+                "  expansion factor:   {:.2}x",
+                kp.cuckoo_expansion_factor
+            )?;
             writeln!(f, "  queries/lookup:     {}", kp.queries_per_lookup)?;
             writeln!(
                 f,
-                "  bandwidth/lookup:   {} ({:.2} KB)",
+                "  bandwidth/lookup:   {} ({:.2} KiB)",
                 kp.total_bandwidth_per_lookup_bytes,
-                kp.total_bandwidth_per_lookup_bytes as f64 / 1024.0
+                kp.total_bandwidth_per_lookup_bytes as f64 / BYTES_PER_KIB
             )?;
         }
 
@@ -205,7 +272,7 @@ mod tests {
         let report = estimate(&params, None);
 
         let total_hints = params.total_hints();
-        let per_hint = 4 + 4 + 4 + 40 + 1; // cutoff + extra_block + extra_offset + parity + flip
+        let per_hint = PER_HINT_META_BYTES + 40; // cutoff + extra_block + extra_offset + parity + flip
         let expected = total_hints * per_hint + params.num_backup_hints * 40;
         assert_eq!(report.client_hint_storage_bytes, expected);
     }
@@ -216,7 +283,10 @@ mod tests {
         let report = estimate(&params, None);
 
         let subset_size = params.num_blocks / 2;
-        assert_eq!(report.online_upload_bytes, 2 * subset_size * 8);
+        assert_eq!(
+            report.online_upload_bytes,
+            2 * (subset_size + EXTRA_QUERY_ELEMENTS_PER_HINT) * QUERY_ELEMENT_BYTES
+        );
         assert_eq!(report.online_download_bytes, 2 * 40);
         assert_eq!(
             report.online_query_bandwidth_bytes,
@@ -230,7 +300,10 @@ mod tests {
         let report = estimate(&params, None);
 
         let subset_size = params.num_blocks / 2;
-        assert_eq!(report.server_xor_ops_per_query, 2 * subset_size * 40);
+        assert_eq!(
+            report.server_xor_ops_per_query,
+            2 * (subset_size + EXTRA_QUERY_ELEMENTS_PER_HINT) * 40
+        );
     }
 
     #[test]
